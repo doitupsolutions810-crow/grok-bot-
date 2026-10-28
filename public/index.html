@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grok Bot</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0b0d; --panel: #141418; --panel2: #1b1b21; --line: #26262e;
+    --fg: #e8e8ec; --dim: #9a9aa8; --acc: #7c5cff; --acc2: #4ade80; --warn: #fbbf24; --err: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.5 Inter, system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 17px; letter-spacing: .3px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); display: inline-block; }
+  .dot.on { background: var(--acc2); }
+  #statusTxt { color: var(--dim); font-size: 12px; }
+  nav { display: flex; gap: 4px; margin-left: auto; }
+  nav button { background: none; border: 1px solid transparent; color: var(--dim); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+  nav button.on { color: var(--fg); background: var(--panel2); border-color: var(--line); }
+  main { max-width: 980px; margin: 0 auto; padding: 20px; }
+  .tab { display: none; }
+  .tab.on { display: block; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .pill { border: 1px solid var(--line); background: var(--panel2); color: var(--dim); border-radius: 999px; padding: 5px 13px; cursor: pointer; font-size: 12.5px; }
+  .pill.on { color: #fff; background: var(--acc); border-color: var(--acc); }
+  input[type=text], textarea, select {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; padding: 9px 12px; font: inherit; outline: none; width: 100%;
+  }
+  .btn { background: var(--acc); color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; font: inherit; }
+  .btn.ghost { background: var(--panel2); border: 1px solid var(--line); color: var(--fg); }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  #msgs { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .msg { padding: 12px 14px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; max-width: 88%; }
+  .msg.user { background: #232340; margin-left: auto; }
+  .msg.bot { background: var(--panel); border: 1px solid var(--line); }
+  .note { color: var(--dim); font-size: 12px; padding: 2px 14px; border-left: 2px solid var(--acc); margin: -6px 0 6px 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .bot { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .bot h3 { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .bot .job { color: var(--dim); font-size: 12.5px; margin: 6px 0; min-height: 34px; }
+  .tag { display: inline-block; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; font-size: 11px; color: var(--dim); margin: 2px 3px 0 0; }
+  .run { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; cursor: pointer; background: var(--panel2); }
+  .run:hover { border-color: var(--acc); }
+  .ev { padding: 7px 12px; border-left: 2px solid var(--line); margin: 3px 0; font-size: 12.5px; color: var(--dim); background: var(--panel2); border-radius: 0 8px 8px 0; }
+  .ev b { color: var(--fg); }
+  .k-start, .k-ready { border-color: var(--acc2); }
+  .k-call, .k-spawn, .k-result, .k-message { border-color: var(--acc); }
+  .k-error, .k-retry { border-color: var(--err); }
+  .k-throttle { border-color: var(--warn); }
+  .k-done, .k-merge, .k-report { border-color: #22d3ee; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  .badge { border-radius: 6px; padding: 2px 9px; font-size: 12px; }
+  .badge.ok { background: #10331f; color: var(--acc2); }
+  .badge.bad { background: #3a1414; color: var(--err); }
+  .badge.warn { background: #33280e; color: var(--warn); }
+  dialog { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 14px; padding: 22px; width: min(520px, 92vw); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px; }
+  .checks label { display: inline-flex; margin: 0; gap: 5px; align-items: center; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; color: var(--fg); }
+  #bar { display: flex; gap: 10px; margin-bottom: 14px; }
+  #bar textarea { min-height: 52px; max-height: 160px; resize: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Grok Bot</h1>
+  <span class="dot" id="dot"></span><span id="statusTxt">connecting…</span>
+  <nav>
+    <button data-tab="chat" class="on">Chat</button>
+    <button data-tab="team">Team</button>
+    <button data-tab="runs">Runs</button>
+    <button data-tab="ledger">Ledger</button>
+    <button data-tab="approvals">Approvals</button>
+  </nav>
+</header>
+<main>
+
+<section id="chat" class="tab on">
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <span id="modes"></span>
+      <select id="agentSel" style="width:auto"></select>
+      <span style="color:var(--dim);font-size:12px" id="modeHint"></span>
+    </div>
+    <div id="msgs"></div>
+    <div id="bar">
+      <textarea id="input" placeholder="Ask Grok Bot anything… (Enter to send, Shift+Enter for newline)"></textarea>
+      <button class="btn" id="send">Send</button>
+    </div>
+  </div>
+</section>
+
+<section id="team" class="tab">
+  <div class="row" style="margin-bottom:14px">
+    <input type="text" id="teamFilter" placeholder="Filter teammates by name, job, or tool…" style="max-width:340px">
+    <button class="btn" onclick="editBot(null)">＋ New teammate</button>
+  </div>
+  <div class="grid" id="bots"></div>
+</section>
+
+<section id="runs" class="tab">
+  <div class="card" id="govCard">Governor: loading…</div>
+  <div id="runsList"></div>
+  <div class="card" id="runDetail" style="display:none"></div>
+</section>
+
+<section id="ledger" class="tab">
+  <div class="card" id="ledgerSummary">Loading ledger…</div>
+  <div class="card" style="overflow-x:auto"><table id="ledgerTable"></table></div>
+</section>
+
+<section id="approvals" class="tab">
+  <div class="row" style="margin-bottom:12px">
+    <button class="btn ghost small" onclick="loadApprovals()">Refresh</button>
+    <span style="color:var(--dim);font-size:12px">Auto Review pauses dangerous tool calls here until you decide.</span>
+  </div>
+  <div id="approvalList"></div>
+</section>
+
+</main>
+
+<dialog id="editDlg">
+  <h3 id="dlgTitle" style="margin-bottom:6px">Teammate</h3>
+  <label>Name <input type="text" id="f_name"></label>
+  <label>Job <textarea id="f_job" style="min-height:64px"></textarea></label>
+  <div class="row">
+    <div style="flex:1"><label>Emoji <input type="text" id="f_emoji"></label></div>
+    <div style="flex:2"><label>Mode <select id="f_mode"></select></div>
+  </div>
+  <label>Tools</label><div class="checks" id="f_tools"></div>
+  <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="f_review"> Auto Review (human approves dangerous calls)</label>
+  <div class="row" style="margin-top:16px;justify-content:flex-end">
+    <button class="btn ghost" onclick="document.getElementById('editDlg').close()">Cancel</button>
+    <button class="btn" id="f_save">Save</button>
+    <button class="btn ghost" id="f_del" style="color:var(--err)">Delete</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = (p, o) => fetch("/api" + p, o).then(r => r.json());
+
+// ---------- tabs ----------
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === b.dataset.tab));
+  if (b.dataset.tab === "team") loadTeam();
+  if (b.dataset.tab === "runs") loadRuns();
+  if (b.dataset.tab === "ledger") loadLedger();
+  if (b.dataset.tab === "approvals") loadApprovals();
+});
+
+// ---------- status ----------
+(async () => {
+  try {
+    const s = await api("/status");
+    $("dot").classList.add("on");
+    $("statusTxt").textContent = `live · ${s.tools.length} tools`;
+  } catch { $("statusTxt").textContent = "offline"; }
+})();
+
+// ---------- chat ----------
+const MODES = [
+  ["chat", "Chat", "fast answers with tools"],
+  ["think", "Think", "slow, careful reasoning"],
+  ["deepsearch", "DeepSearch", "browse the web first"],
+  ["squad", "Squad", "PLAN → parallel workers → lead merge (Avrone)"],
+  ["deep", "Deep", "adversarial review waves until converged (Avrone)"]
+];
+let mode = "chat", agentsData = { agents: [], bots: [], allTools: [], modes: [], models: [] };
+
+$("modes").innerHTML = MODES.map(([m, label]) => `<button class="pill" data-mode="${m}">${label}</button>`).join("");
+const setModeHint = () => { $("modeHint").textContent = (MODES.find(x => x[0] === mode) || [])[2] || ""; };
+document.querySelectorAll("#modes .pill").forEach(p => p.onclick = () => {
+  mode = p.dataset.mode;
+  document.querySelectorAll("#modes .pill").forEach(x => x.classList.toggle("on", x === p));
+  setModeHint();
+});
+document.querySelector('#modes .pill').classList.add("on"); setModeHint();
+
+async function loadAgentsForChat() {
+  try {
+    agentsData = await api("/agents");
+    const opts = [
+      ...agentsData.agents.map(a => `<option value="${a.id}">${a.id === "grok-main" ? "🎯 " : ""}${a.name}</option>`),
+      ...agentsData.bots.map(b => `<option value="${b.id}">${b.emoji || "🤖"} ${b.name}</option>`),
+      `<option value="team">🧠 Team (chief of staff routes it)</option>`
+    ];
+    const sel = $("agentSel"); const cur = sel.value;
+    sel.innerHTML = opts.join("");
+    if (cur) sel.value = cur;
+    // mode select in editor dialog
+    $("f_mode").innerHTML = (agentsData.modes || []).map(m => `<option>${m}</option>`).join("");
+  } catch {}
+}
+loadAgentsForChat();
+
+function addMsg(cls, text) {
+  const d = document.createElement("div"); d.className = "msg " + cls; d.textContent = text;
+  $("msgs").appendChild(d); window.scrollTo(0, document.body.scrollHeight); return d;
+}
+function addNote(text) {
+  const d = document.createElement("div"); d.className = "note";
+  d.textContent = "▸ " + text; $("msgs").appendChild(d); window.scrollTo(0, document.body.scrollHeight);
+}
+
+async function send() {
+  const text = $("input").value.trim();
+  if (!text) return;
+  $("input").value = "";
+  addMsg("user", text);
+  const bot = addMsg("bot", "");
+  const agentId = $("agentSel").value || "grok-main";
+
+  try {
+    const res = await fetch("/api/chat/stream", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentId, message: text, mode })
+    });
+    if (!res.body) { bot.textContent = await res.json().then(r => r.error || "no response"); return; }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "", out = "", pending = null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6);
+        if (payload === "[DONE]") continue;
+        const ev = JSON.parse(payload);
+        if (ev.note) addNote(ev.note);
+        if (ev.delta) out += ev.delta;
+        if (ev.pendingApproval) pending = ev.pendingApproval;
+      }
+      bot.textContent = out || "…";
+    }
+    if (pending) bot.textContent = out + `\n\n⏸ Auto Review: approval #${pending} needed (Approvals tab).`;
+  } catch (e) { bot.textContent = "error: " + e.message; }
+}
+$("send").onclick = send;
+$("input").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+
+// ---------- team ----------
+$("teamFilter").oninput = renderBots;
+let allBots = [];
+async function loadTeam() {
+  agentsData = await api("/agents");
+  allBots = [
+    ...agentsData.agents.map(a => ({ ...a, core: true })),
+    ...agentsData.bots.map(b => ({ ...b }))
+  ];
+  renderBots();
+}
+function renderBots() {
+  const q = $("teamFilter").value.toLowerCase();
+  const list = allBots.filter(b =>
+    !q || (b.name + " " + (b.job || "") + " " + (b.systemPrompt || "")).toLowerCase().includes(q));
+  $("bots").innerHTML = list.map(b => `
+    <div class="bot">
+      <h3>${b.emoji || "🎯"} ${b.name} ${b.core ? '<span class="tag">core</span>' : ""}
+        ${b.review ? '<span class="tag">Auto Review</span>' : ""}
+        <span style="margin-left:auto"></span>
+        ${b.core ? "" : `<button class="btn ghost small" onclick='editBot(${JSON.stringify(b.id)})'>✎</button>`}
+      </h3>
+      <div class="job">${b.job || b.systemPrompt || ""}</div>
+      <div>${(b.tools || []).map(t => `<span class="tag">${t}</span>`).join("")}</div>
+    </div>`).join("") || `<div style="color:var(--dim)">No teammates match the filter.</div>`;
+}
+let editingId = null;
+function editBot(id) {
+  editingId = id;
+  const b = id ? allBots.find(x => x.id === id) : null;
+  $("dlgTitle").textContent = b ? `Edit ${b.name}` : "New teammate";
+  $("f_name").value = b ? b.name : "";
+  $("f_job").value = b ? b.job : "";
+  $("f_emoji").value = b ? (b.emoji || "🤖") : "🤖";
+  $("f_mode").value = b ? (b.mode || "chat") : "chat";
+  $("f_review").checked = b ? !!b.review : false;
+  $("f_tools").innerHTML = (agentsData.allTools || []).filter(t => t !== "*")
+    .map(t => `<label><input type="checkbox" value="${t}" ${b && (b.tools || []).includes(t) ? "checked" : ""}> ${t}</label>`).join("");
+  $("f_del").style.display = b ? "" : "none";
+  $("editDlg").showModal();
+}
+$("f_save").onclick = async () => {
+  const body = {
+    name: $("f_name").value.trim(), job: $("f_job").value.trim(), emoji: $("f_emoji").value.trim(),
+    mode: $("f_mode").value, review: $("f_review").checked,
+    tools: [...document.querySelectorAll("#f_tools input:checked")].map(x => x.value),
+    model: (agentsData.models || [])[0]
+  };
+  const res = editingId
+    ? await fetch(`/api/agents/${editingId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+    : await fetch("/api/agents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await res.json();
+  if (!j.ok && !j.id) return alert((j.errors || [j.error]).join("\n"));
+  $("editDlg").close(); loadTeam(); loadAgentsForChat();
+};
+$("f_del").onclick = async () => {
+  if (!confirm("Delete this teammate?")) return;
+  await fetch(`/api/agents/${editingId}`, { method: "DELETE" });
+  $("editDlg").close(); loadTeam(); loadAgentsForChat();
+};
+
+// ---------- runs ----------
+async function loadRuns() {
+  const g = await api("/governor");
+  const s = g.sensors || {};
+  $("govCard").innerHTML = `
+    <div class="row">
+      <b style="font-size:16px">Governor</b>
+      <span class="badge ${g.state === "healthy" ? "ok" : g.state === "throttled" ? "warn" : "bad"}">${g.state}</span>
+      <span style="color:var(--dim)">${g.target}/${g.max} parallel lanes</span>
+      <span style="margin-left:auto;color:var(--dim);font-size:12px">
+        load ${Math.round((s.load ?? 1) * 100)}% · mem ${Math.round((s.mem ?? 1) * 100)}% · disk ${Math.round((s.disk ?? 1) * 100)}% · thermal ${Math.round((s.thermal ?? 1) * 100)}%
+      </span>
+    </div>
+    <div style="color:var(--dim);font-size:12px;margin-top:6px">Sensors shown as health factors (100% = fully healthy). Workers are gated so the host never melts.</div>`;
+  const runs = await api("/runs");
+  $("runsList").innerHTML = runs.length ? runs.map(r => `
+    <div class="run" onclick="openRun('${r.runId}')">
+      <span><b>${r.runId}</b> <span style="color:var(--dim);font-size:12px">${r.started || ""}</span></span>
+      <span>${r.done ? '<span class="badge ok">done</span>' : '<span class="badge warn">open</span>'}</span>
+    </div>`).join("") : `<div class="card" style="color:var(--dim)">No runs yet — send a Squad or Deep message.</div>`;
+}
+const KIND_LABEL = {
+  "run.start": "▶ run started", "plan.ready": "📋 plan ready", "agent.spawn": "🤖 agent spawned",
+  "agent.done": "✅ agent done", "agent.message": "💬 agent step", "tool.call": "🔧 tool call",
+  "tool.result": "↩ tool result", "lead.merge": "🧩 lead merged", "lead.retry": "🔁 weak lead retried",
+  "deep.lead.report": "🧠 deep review report", "governor.throttle": "🌡 governor throttled",
+  "approval.pending": "⏸ awaiting approval", "error": "💥 error", "run.done": "🏁 run done"
+};
+async function openRun(id) {
+  const run = await api(`/runs/${id}`);
+  const d = $("runDetail"); d.style.display = "";
+  d.innerHTML = `<h3 style="margin-bottom:8px">${id} — event timeline</h3>` +
+    run.events.map(e => {
+      const label = KIND_LABEL[e.kind] || e.kind;
+      const detail = Object.entries(e).filter(([k]) => !["ts", "kind"].includes(k))
+        .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v).slice(0, 140)}`).join(" · ");
+      return `<div class="ev k-${e.kind.split(".").pop()}"><b>${label}</b> <span style="color:var(--dim)">· ${e.ts || ""}</span><br>${detail}</div>`;
+    }).join("") +
+    `<div style="color:var(--dim);font-size:12px;margin-top:8px">Corrupt/truncated CodeX lines are skipped — this timeline is the replayable truth.</div>`;
+}
+
+// ---------- ledger ----------
+async function loadLedger() {
+  const l = await api("/ledger");
+  $("ledgerSummary").innerHTML = `<div class="row"><b style="font-size:16px">Trace ledger</b>
+    <span class="badge ${l.intact ? "ok" : "bad"}">${l.intact ? "hash chain intact" : "TAMPERED"}</span>
+    <span style="color:var(--dim)">${l.entries.length} recent entries</span></div>
+    <div style="color:var(--dim);font-size:12px;margin-top:6px">Every tool call is chained: hash(entry) covers hash(prev). Editing any row breaks the chain.</div>`;
+  $("ledgerTable").innerHTML = `<tr><th>when</th><th>agent</th><th>tool</th><th>ms</th><th>ok</th></tr>` +
+    l.entries.slice(0, 60).map(e => `<tr><td>${e.ts || ""}</td><td>${e.agent}</td><td>${e.tool}</td><td>${e.duration_ms}</td>
+      <td>${e.ok ? "✅" : "❌ " + (e.error || "")}</td></tr>`).join("");
+}
+
+// ---------- approvals ----------
+async function loadApprovals() {
+  const list = await api("/approvals");
+  $("approvalList").innerHTML = list.length ? list.map(a => {
+    const args = (() => { try { return JSON.parse(a.args); } catch { return a.args; } })();
+    return `<div class="card">
+      <div class="row"><b>#${a.id} · ${a.agent} → ${a.tool}</b><span class="badge warn">pending</span></div>
+      <pre style="background:var(--panel2);padding:10px;border-radius:8px;margin:10px 0;overflow-x:auto;font-size:12px">${JSON.stringify(args, null, 2)}</pre>
+      <div class="row">
+        <button class="btn small" onclick="decideApproval(${a.id}, true)">Approve & resume</button>
+        <button class="btn ghost small" style="color:var(--err)" onclick="decideApproval(${a.id}, false)">Deny</button>
+        <span id="apres-${a.id}" style="color:var(--dim);font-size:12px"></span>
+      </div>
+    </div>`;
+  }).join("") : `<div class="card" style="color:var(--dim)">No pending approvals. Dangerous tool calls (rm -rf, force-push, …) from Auto-Review agents land here.</div>`;
+}
+async function decideApproval(id, approve) {
+  const j = await api(`/approvals/${id}/decision`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approve })
+  });
+  $(`apres-${id}`).textContent = j.resumed ? "resumed — answer: " + String(j.answer).slice(0, 160) : (approve ? "approved" : "denied");
+  setTimeout(loadApprovals, 1500);
+}
+
+// mermaid (used by future run-graph rendering; harmless if CDN blocked)
+try { if (window.mermaid) mermaid.initialize({ startOnLoad: false, theme: "dark" }); } catch {}
+</script>
+</body>
+</html>

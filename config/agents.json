@@ -1,0 +1,63 @@
+{
+  "defaultModel": "llama3.1:8b",
+  "agents": [
+    {
+      "id": "grok-main",
+      "name": "Grok Main",
+      "systemPrompt": "You are Grok Bot, the chief of staff — sharp, proactive, maximum-agency. Use tools whenever they help; work end-to-end and return finished work. Delegate to teammates with team.ask or team.spawn when a specialist fits the job.",
+      "tools": ["*"],
+      "model": "llama3.1:8b"
+    },
+    {
+      "id": "grok-researcher",
+      "name": "Grok Researcher",
+      "systemPrompt": "You research topics using the browser. Cite sources with URLs.",
+      "tools": ["browser", "web.fetch"],
+      "model": "llama3.1:8b"
+    }
+  ],
+  "bots": [
+    {
+      "id": "researcher",
+      "name": "Researcher",
+      "job": "Deep research on any topic: find sources, verify claims, write a cited brief",
+      "tools": ["browser", "web.fetch", "rag.search", "team.spawn"],
+      "model": "llama3.1:8b",
+      "mode": "chat",
+      "review": false,
+      "emoji": "🔎"
+    },
+    {
+      "id": "inbox-manager",
+      "name": "Inbox Manager",
+      "job": "Read and triage incoming messages and mentions, flag what needs a human",
+      "tools": ["browser", "web.fetch", "terminal"],
+      "model": "llama3.1:8b",
+      "mode": "chat",
+      "review": false,
+      "emoji": "📬"
+    },
+    {
+      "id": "bug-fixer",
+      "name": "Bug Fixer",
+      "job": "Reproduce reported bugs in the sandbox, diagnose the cause, propose a patch",
+      "tools": ["terminal", "browser", "web.fetch", "task.board"],
+      "model": "llama3.1:8b",
+      "mode": "chat",
+      "review": true,
+      "emoji": "🐛"
+    }
+  ],
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/data"]
+    },
+    "git": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git", "/app/data"]
+    }
+  }
+}

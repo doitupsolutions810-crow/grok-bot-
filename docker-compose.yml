@@ -19,6 +19,9 @@ services:
     container_name: grok-bot
     restart: unless-stopped
     ports: ["3000:3000"]
+    # Lets the in-container AVRONE bridge reach a host-launched AVRONE on Linux too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       PORT: 3000
       DOCKER_HOST: tcp://socket-proxy:2375      # no raw socket mount anymore

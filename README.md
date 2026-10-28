@@ -142,6 +142,19 @@ profile, boot self-tests) → live tests → the evolution report. Both consoles
 end up live: AVRONE on `:8710`, Grok Bot on `:3000`, with `EVOLVE.md` in
 `./data`.
 
+### Verify without CI
+
+GitHub Actions is not required to prove the boot. `./verify.sh` runs the exact
+CI sequence locally — compose config check (core + full profile), full-profile
+boot with the `ready:true` self-test gate, the 8 live tests, the agents'
+evolution loop, and AVRONE's offline suite when `../Avrone` is present — then
+writes the verdict to `data/VERIFY.md`. Exit code 0 means the system booted,
+passed its live tests, and evolved.
+
+Boot is race-hardened: required images already on the host are not re-pulled,
+and model pulls block until the model is genuinely listed by Ollama (up to 15
+min per model), so the LLM self-test can never race a slow first download.
+
 ## Credit
 
 The orchestration core is a port of [Avrone](https://github.com/doitupsolutions810-crow/Avrone)

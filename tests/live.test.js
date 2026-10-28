@@ -16,10 +16,17 @@ async function test(name, fn) {
 
 const r = await fetch(`${BASE}/api/status`).then(j);
 if (!r.ready) throw new Error("boot self-test did not pass");
+if (!Array.isArray(r.selftest) || r.selftest.length === 0) {
+  throw new Error("boot status did not include a non-empty self-test result list");
+}
+const failedSelfTests = r.selftest.filter(t => !t.ok);
+if (failedSelfTests.length) {
+  throw new Error("boot self-test reported failures: " + failedSelfTests.map(t => t.name + ": " + t.error).join("; "));
+}
 
 const results = [
   await test("boot self-test green", () =>
-    `${r.selftest.filter(t => t.ok).length}/${r.selftest.length} subsystems live`),
+    `${r.selftest.length}/${r.selftest.length} subsystems live`),
 
   await test("LLM live tool-call: terminal", async () => {
     const res = await post("/chat", {

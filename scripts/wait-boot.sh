@@ -28,7 +28,11 @@ docker info >/dev/null 2>&1 || { fail_with_logs "Docker daemon is unavailable or
 
 DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
 STATUS_FILE="${TMPDIR:-/tmp}/grokbot-verify-status-$$.json"
-trap 'rm -f "$STATUS_FILE"' EXIT HUP INT TERM
+cleanup() { rm -f "$STATUS_FILE"; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 LAST_RESTARTS=-1
 
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do

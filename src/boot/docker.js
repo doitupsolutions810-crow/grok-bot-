@@ -34,18 +34,47 @@ export async function bootDocker({ log = console.log } = {}) {
   return docker;
 }
 
+// Pull an image only when it is not already present locally — a flaky registry
+// must never block a boot that already has what it needs.
+async function ensureImage(docker, image, log) {
+  try {
+    await docker.getImage(image).inspect();
+    return;
+  } catch { /* not local yet */ }
+  log(`[boot] pulling image ${image}...`);
+  await new Promise((resolve, reject) => {
+    docker.pull(image, (err, stream) => {
+      if (err) return reject(err);
+      docker.modem.followProgress(stream, err2 => err2 ? reject(err2) : resolve(true));
+    });
+  });
+}
+
+async function ollamaUp(base) {
+  try { return (await fetch(`${base}/api/tags`)).ok; } catch { return false; }
+}
+
 async function ensureModel(model, log) {
   const base = process.env.OLLAMA_URL || "http://ollama:11434";
-  const list = await fetch(`${base}/api/tags`).then(r => r.json());
-  if (!list.models?.some(m => m.name === model)) {
-    log(`[boot] Pulling model ${model} (one-time, may take a while)...`);
-    await fetch(`${base}/api/pull`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, stream: false })
-    });
+  // Wait for Ollama to genuinely answer — a slow-starting sidecar must not
+  // crash the boot with a connection error.
+  const deadline = Date.now() + 180_000;
+  while (!(await ollamaUp(base))) {
+    if (Date.now() > deadline) throw new Error(`ollama did not become reachable at ${base} within 3 min`);
+    await new Promise(r => setTimeout(r, 2000));
   }
-  log(`[boot] Model ready: ${model}`);
+  const present = async () => {
+    const list = await fetch(`${base}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
+    return !!list.models?.some(m => m.name === model);
+  };
+  if (await present()) { log(`[boot] Model ready: ${model}`); return; }
+  log(`[boot] Pulling model ${model} (one-time, may take a while)...`);
+  await fetch(`${base}/api/pull`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, stream: false })
+  }).catch(() => { /* readiness is gated by preinstall's pullModel */ });
+  log(`[boot] Model pull requested: ${model}`);
 }
 
 async function ensureSandbox(docker, log) {
@@ -53,6 +82,9 @@ async function ensureSandbox(docker, log) {
   const containers = await docker.listContainers({ all: true });
   const existing = containers.find(c => c.Names.includes(`/${name}`));
   if (!existing) {
+    // First boot: the sandbox image may not be on the host yet — pull-on-demand
+    // instead of failing the boot with a 404.
+    await ensureImage(docker, "ubuntu:24.04", log);
     // Hardened sandbox: no caps, no new privileges, pids/tmp limits, and the
     // shared grok_workspace NAMED volume (container paths don't work in Binds —
     // they resolve on the HOST, so we use a named volume managed by Docker).
@@ -84,6 +116,7 @@ async function ensurePlugins(docker, log) {
   for (const p of plugins) {
     const containers = await docker.listContainers({ all: true });
     if (containers.some(c => c.Names.includes(`/${p.name}`))) continue;
+    await ensureImage(docker, p.image, log);
     await docker.createContainer({
       name: p.name,
       Image: p.image,

@@ -21,11 +21,16 @@ fi
 
 say "1. AVRONE (offline test suite, then launch)"
 if [ -d "$AVRONE_DIR" ]; then
-  (cd "$AVRONE_DIR" && pip install -e ".[dev]" && python -m pytest -q)
-  [ -f "$AVRONE_DIR/.env" ] || cp "$AVRONE_DIR/deploy/full.env" "$AVRONE_DIR/.env"
-  (cd "$AVRONE_DIR" && avrone-cli doctor || true)
-  (cd "$AVRONE_DIR" && nohup avrone > /tmp/avrone.log 2>&1 &)
-  echo "AVRONE launching on http://127.0.0.1:8710 (log: /tmp/avrone.log)"
+  if command -v python3 >/dev/null 2>&1; then
+    (cd "$AVRONE_DIR" && { [ -x .venv/bin/python ] || python3 -m venv .venv; } \
+      && .venv/bin/pip install -q -e ".[dev]" && .venv/bin/python -m pytest -q)
+    [ -f "$AVRONE_DIR/.env" ] || cp "$AVRONE_DIR/deploy/full.env" "$AVRONE_DIR/.env"
+    (cd "$AVRONE_DIR" && .venv/bin/avrone-cli doctor || true)
+    (cd "$AVRONE_DIR" && nohup .venv/bin/avrone > /tmp/avrone.log 2>&1 &)
+    echo "AVRONE launching on http://127.0.0.1:8710 (log: /tmp/avrone.log)"
+  else
+    echo "NOTE: python3 not found — skipping AVRONE (the avrone.squad bridge will report AVRONE_URL unset)."
+  fi
 else
   echo "NOTE: AVRONE_DIR=$AVRONE_DIR not found — skipping AVRONE (the avrone.squad bridge will report AVRONE_URL unset)."
 fi

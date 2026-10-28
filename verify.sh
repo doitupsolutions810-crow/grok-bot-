@@ -53,7 +53,12 @@ step "live agent tests (8, real inference)" docker compose exec -T grok-bot node
 step "agents' evolution loop (EVOLVE.md)" docker compose exec -T grok-bot node scripts/evolve.js
 
 if [ -d "$AVRONE_DIR" ]; then
-  step "AVRONE offline suite" sh -c "cd '$AVRONE_DIR' && python -m pytest -q"
+  if command -v python3 >/dev/null 2>&1; then
+    step "AVRONE offline suite (venv)" sh -c "cd '$AVRONE_DIR' && { [ -x .venv/bin/python ] || python3 -m venv .venv; } && .venv/bin/pip install -q -e '.[dev]' && .venv/bin/python -m pytest -q"
+  else
+    echo "- SKIP AVRONE suite (python3 not found on PATH)" >> "$REPORT"
+    echo "SKIP: AVRONE suite (python3 not found)"
+  fi
 else
   echo "- SKIP AVRONE suite (AVRONE_DIR=$AVRONE_DIR not found)" >> "$REPORT"
   echo "SKIP: AVRONE suite ($AVRONE_DIR not found)"

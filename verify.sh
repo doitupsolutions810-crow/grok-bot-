@@ -1,7 +1,7 @@
 #!/bin/sh
 # Local, GitHub-independent verification for the self-hosted Grok Bot stack.
-# The default boot budget is 60 minutes because .env.full enables LLaVA and pulls
-# models synchronously; override VERIFY_BOOT_TIMEOUT_SECONDS on slower hosts.
+# .env.full enables vision; first boot may pull several GB, so the default boot
+# gate is 60 minutes. Increase VERIFY_BOOT_TIMEOUT_SECONDS for slow hosts.
 set -u
 
 REPORT="data/VERIFY.md"
@@ -27,11 +27,12 @@ step() {
   if "$@"; then
     echo "- PASS $_name" >> "$REPORT"
     echo "PASS: $_name"
-  else
-    echo "- FAIL $_name" >> "$REPORT"
-    echo "FAIL: $_name"
-    FAILED=1
+    return 0
   fi
+  echo "- FAIL $_name" >> "$REPORT"
+  echo "FAIL: $_name"
+  FAILED=1
+  return 1
 }
 
 skip_step() {
@@ -48,22 +49,44 @@ require_avrone_failure() {
   FAILED=1
 }
 
-# Preserve an existing operator config; new checkouts use the full product preset.
+# Preserve an operator config; on a fresh checkout use the documented full preset.
 if [ ! -f .env ]; then
-  step "select default full configuration" cp .env.full .env
+  step "select default full configuration" cp .env.full .env || true
 fi
 
-step "Docker CLI, Compose v2, and daemon access" sh -c 'command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1'
-step "compose config check (core + full profile)" sh -c 'docker compose config --quiet && docker compose --profile full config --quiet'
+# Gate expensive operations on cheap prerequisites so a missing Docker daemon or
+# invalid Compose file fails immediately instead of wasting a 60-minute wait.
+if [ "$FAILED" -eq 0 ]; then
+  step "Docker CLI, Compose v2, and daemon access" sh -c 'command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1' || true
+fi
+if [ "$FAILED" -eq 0 ]; then
+  step "compose config check (core + full profile)" sh -c 'docker compose config --quiet && docker compose --profile full config --quiet' || true
+fi
+if [ "$FAILED" -eq 0 ]; then
+  step "boot the full stack (build + up, strict self-test gate)" docker compose --profile full up -d --build || true
+fi
+if [ "$FAILED" -eq 0 ]; then
+  step "boot self-test gate (ready:true; bounded restart detection)" ./scripts/wait-boot.sh "${VERIFY_BOOT_TIMEOUT_SECONDS:-3600}" || true
+else
+  skip_step "boot self-test gate" "a prerequisite or Compose startup step failed"
+fi
+if [ "$FAILED" -eq 0 ]; then
+  step "live agent tests (real inference, Docker terminal, browser, squad)" docker compose exec -T grok-bot node tests/live.test.js || true
+else
+  skip_step "live agent tests" "the boot gate did not pass"
+fi
+if [ "$FAILED" -eq 0 ]; then
+  step "agents' evolution loop (EVOLVE.md)" docker compose exec -T grok-bot node scripts/evolve.js || true
+else
+  skip_step "agents' evolution loop" "a required prior gate did not pass"
+fi
 
-step "boot the full stack (build + up, strict self-test gate)" docker compose --profile full up -d --build
-step "boot self-test gate (ready:true; bounded restart detection)" ./scripts/wait-boot.sh "${VERIFY_BOOT_TIMEOUT_SECONDS:-3600}"
-step "live agent tests (real inference, Docker terminal, browser, squad)" docker compose exec -T grok-bot node tests/live.test.js
-step "agents' evolution loop (EVOLVE.md)" docker compose exec -T grok-bot node scripts/evolve.js
-
+# AVRONE's suite is independent diagnostics. A missing adjacent repo is an
+# explicit partial result by default; set VERIFY_REQUIRE_AVRONE=true for the
+# combined system release gate.
 if [ -d "$AVRONE_DIR" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    step "AVRONE offline suite (isolated venv)" env AVRONE_DIR="$AVRONE_DIR" sh -c 'cd "$AVRONE_DIR" && { [ -x .venv/bin/python ] || python3 -m venv .venv; } && .venv/bin/python -m pip install -q -e ".[dev]" && .venv/bin/python -m pytest -q'
+    step "AVRONE offline suite (isolated venv)" env AVRONE_DIR="$AVRONE_DIR" sh -c 'cd "$AVRONE_DIR" && { [ -x .venv/bin/python ] || python3 -m venv .venv; } && .venv/bin/python -m pip install -q -e ".[dev]" && .venv/bin/python -m pytest -q' || true
   elif [ "$VERIFY_REQUIRE_AVRONE" = "true" ] || [ "$VERIFY_REQUIRE_AVRONE" = "1" ]; then
     require_avrone_failure "python3 is not installed"
   else
@@ -82,7 +105,7 @@ fi
   if [ "$FAILED" -ne 0 ]; then
     echo "**FAILURES DETECTED** — the candidate is not verified. See the FAIL lines and boot logs above."
   elif [ "$SKIPPED" -ne 0 ]; then
-    echo "**GROK BOT CORE VERIFIED / INTEGRATION PARTIAL** — required core checks passed, but optional integration checks were skipped."
+    echo "**GROK BOT CORE VERIFIED / INTEGRATION PARTIAL** — core checks passed, but optional integration checks were skipped."
   else
     echo "**SYSTEM GREEN** — booted, strict self-tests passed, live tests passed, evolution report written, and AVRONE's offline suite passed. $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   fi

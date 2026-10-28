@@ -1,3 +1,4 @@
+successfully downloaded text file (SHA: c0f6292de2ed6b6e16b38d75618880b537691c11)
 name: live-tests
 on:
   push: { branches: [main] }
@@ -13,6 +14,11 @@ jobs:
       BOOT_STRICT: "true"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Config compatibility check (core + full profile)
+        run: |
+          docker compose config --quiet
+          docker compose --profile full config --quiet
 
       - name: Bring up the full live stack
         run: docker compose up -d --build

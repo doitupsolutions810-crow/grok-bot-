@@ -1,4 +1,5 @@
-FROM node:20-slim
+successfully downloaded text file (SHA: de3e4b321471d7670fb3bd26e513a75e2c574ae4)
+FROM node:24-slim
 
 # docker.io  → terminal tool shells out to `docker exec`
 # python3/make/g++ → better-sqlite3 native build fallback

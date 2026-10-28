@@ -1,3 +1,4 @@
+successfully downloaded text file (SHA: 84073fcf72602fa1febd09ad84436b8ceb251f28)
 # Grok Bot ⚡
 
 A self-hosted agent platform with full **Grok Bot parity**: Docker-connected on boot,
@@ -88,6 +89,23 @@ python3 tools/model_bench.py --base http://127.0.0.1:11434 --protocol native
 On a GPU host, upgrade in one env line (`LLM_MODEL=qwen3.5:9b`): the Qwen family
 leads open-weight tool-calling benchmarks (BFCL v4 / TAU2-bench), so bigger Qwen
 models only get better at orchestration.
+
+## Full profile (the final product configuration)
+
+The maximal profile — every subsystem on, one file:
+
+```bash
+cp .env.full .env
+docker compose --profile full up -d --build
+```
+
+`.env.full` enables: vision (LLaVA `llava:7b`, auto-pulled on boot), the model
+fallback chain (`MODEL_CHAIN`), deeper squads and recursive deep review waves,
+Auto Review for sensitive actions, and X integration (fill your listener
+bearer token). The `full` compose profile adds Whisper STT, Piper TTS, and
+ComfyUI image generation sidecars. Boot self-tests (`BOOT_STRICT`) still gate
+startup, and CI validates both the core and full compose configurations on
+every push.
 
 ## Live tests
 

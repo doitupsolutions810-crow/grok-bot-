@@ -18,6 +18,12 @@ docker compose up -d --build
 docker compose logs -f grok-bot
 ```
 
+> **First boot:** the API comes up only after the full boot chain finishes —
+> including pulling the required models (~2 GB for `qwen2.5:3b` +
+> `nomic-embed-text`). On a fresh host that can take 10–25 minutes; the log
+> above shows live pull progress, and subsequent boots reuse the pulled models
+> and come up in seconds.
+
 Full profile adds Whisper STT, Piper TTS, and ComfyUI image generation:
 
 ```bash

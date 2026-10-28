@@ -54,4 +54,10 @@ jobs:
 
       - name: Boot + agent logs on failure
         if: failure()
-        run: docker compose logs --tail 300
+        run: |
+          docker compose logs --tail 300
+          # surface the failure tail as run annotations too (readable without sign-in)
+          docker compose logs --tail 40 grok-bot 2>&1 | tail -n 10 | while IFS= read -r l; do
+            l="${l//%/%25}"
+            echo "::error::${l:0:220}"
+          done

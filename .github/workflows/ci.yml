@@ -1,14 +1,34 @@
-name: CI
-on: [push, pull_request]
+name: live-tests
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+
 jobs:
-  test:
+  live:
     runs-on: ubuntu-latest
-    strategy:
-      matrix: { python: ["3.11", "3.12"] }
+    timeout-minutes: 45
+    env:
+      LLM_MODEL: llama3.2:1b
+      MODELS_REQUIRED: llama3.2:1b,nomic-embed-text
+      BOOT_STRICT: "true"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "${{ matrix.python }}" }
-      - run: pip install -e ".[dev]"
-      - run: pytest -q
-        env: { AVRONE_LLM_MODE: mock, AVRONE_RUNNER: local }
+
+      - name: Bring up the full live stack
+        run: docker compose up -d --build
+
+      - name: Wait for boot self-test (real image+model pulls, MCP handshake)
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/status -o status.json; then break; fi
+            sleep 10
+          done
+          cat status.json
+          grep -q '"ready":true' status.json
+
+      - name: Live agent tests (real inference, docker exec, browser)
+        run: docker compose exec -T grok-bot node tests/live.test.js
+
+      - name: Boot + agent logs on failure
+        if: failure()
+        run: docker compose logs --tail 300

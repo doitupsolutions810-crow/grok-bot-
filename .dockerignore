@@ -1,12 +1,7 @@
-# Keep secrets and runtime state out of the build context.
+node_modules
 .env
-.env.*
-!.env.example
+data
+models
+voices
 .git
-data/
-workspace/
-**/__pycache__
-*.pyc
-.pytest_cache/
-.coverage
-*.egg-info/
+tests/status.json

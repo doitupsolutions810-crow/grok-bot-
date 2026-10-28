@@ -1,43 +1,92 @@
-# AVRONE in a container. It reaches OpenClaw on the host and spawns its agent
-# environment as sibling containers through the host's Docker socket.
-#
-# Locked down by default; every knob below is opt-out via .env or the shell:
-#   AVRONE_PUBLISH_ADDR  host address the UI/API is published on (default 127.0.0.1;
-#                        0.0.0.0 exposes it to the LAN. /api/chat has no auth, so front it
-#                        with an authenticating proxy/VPN and set AVRONE_ADMIN_TOKEN)
-#   AVRONE_PUBLISH_PORT  host port (default 8710)
-#   AVRONE_UID/GID       user the server runs as (default 1000:1000, so the ./workspace and
-#                        ./data bind mounts stay owned by you; run `mkdir -p workspace data`
-#                        first, or Docker creates them root-owned). 0:0 restores the old root mode.
-#   DOCKER_GID           gid owning /var/run/docker.sock on the host
-#                        (`stat -c %g /var/run/docker.sock`), so the docker runner can reach it.
-#                        Without access, AVRONE_RUNNER=auto falls back to the local runner.
-#   AVRONE_ALLOW_NETWORK sandbox containers get --network none unless this is true
-#   AVRONE_READ_ONLY     read-only root filesystem (default true; /tmp is a tmpfs)
-# Check a node with: docker compose run --rm avrone avrone-cli doctor
 services:
-  avrone:
-    build: .
-    init: true                       # reap the subprocesses agents spawn
-    user: "${AVRONE_UID:-1000}:${AVRONE_GID:-1000}"
-    group_add: ["${DOCKER_GID:-999}"]
-    ports: ["${AVRONE_PUBLISH_ADDR:-127.0.0.1}:${AVRONE_PUBLISH_PORT:-8710}:8710"]
-    env_file: .env
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
     environment:
-      AVRONE_LLM_BASE_URL: ${AVRONE_LLM_BASE_URL:-http://host.docker.internal:18789/v1}
-      AVRONE_WORKSPACE: ${PWD}/workspace   # same path on host and in container, so bind mounts line up
-      AVRONE_DATA_DIR: /srv/data           # the ./data volume, whatever .env says
-      AVRONE_HOST: 0.0.0.0                 # bind inside the container; exposure is set by ports: above
-      AVRONE_PORT: "8710"
-      AVRONE_ALLOW_NETWORK: ${AVRONE_ALLOW_NETWORK:-false}
-      HOME: /tmp
+      CONTAINERS: 1
+      EXEC: 1
+      POST: 1
+      PULL: 1
+      IMAGES: 1
+      ALLOW_RESTARTS: 1
+      NETWORKS: 0
+      VOLUMES: 0
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock   # docker runner; this grants control of host Docker
-      - ./workspace:${PWD}/workspace
-      - ./data:/srv/data
-    extra_hosts: ["host.docker.internal:host-gateway"]
-    read_only: ${AVRONE_READ_ONLY:-true}
-    tmpfs: ["/tmp"]
-    cap_drop: [ALL]                  # nothing needs caps: port 8710 > 1024, non-root user
-    # cap_add: [NET_RAW]             # only if you want mtr/raw-socket traceroute in local-runner mode
-    security_opt: ["no-new-privileges:true"]
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  grok-bot:
+    build: .
+    container_name: grok-bot
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      PORT: 3000
+      DOCKER_HOST: tcp://socket-proxy:2375      # no raw socket mount anymore
+      LLM_PROVIDER: ollama
+      OLLAMA_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b}
+      MODELS_REQUIRED: ${MODELS_REQUIRED:-llama3.1:8b,nomic-embed-text}
+      BROWSER_WS: ws://browser:3000
+      ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
+      BOOT_STRICT: ${BOOT_STRICT:-true}
+      # Governor (Avrone) — health-gated parallelism
+      GROK_MAX_PARALLEL: ${GROK_MAX_PARALLEL:-4}
+      GROK_MIN_PARALLEL: ${GROK_MIN_PARALLEL:-1}
+      GROK_WANT_PARALLEL: ${GROK_WANT_PARALLEL:-}
+      GROK_THERMAL_MAX_C: ${GROK_THERMAL_MAX_C:-80}
+      GROK_GOVERNOR: ${GROK_GOVERNOR:-true}
+      # Orchestration (Trinity)
+      GROK_SQUAD_N: ${GROK_SQUAD_N:-4}
+      GROK_SQUAD_STEPS: ${GROK_SQUAD_STEPS:-12}
+      GROK_DEEP_ROUNDS: ${GROK_DEEP_ROUNDS:-3}
+      GROK_MAX_SPAWN_DEPTH: ${GROK_MAX_SPAWN_DEPTH:-2}
+      SKILLS_DIR: /app/skills
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./data/images:/output                 # generated images (served by /api/images)
+      - ./skills:/app/skills:ro               # SKILL.md playbooks
+    depends_on: [ollama, browser, socket-proxy]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: grok-ollama
+    restart: unless-stopped
+    volumes: [ollama_models:/root/.ollama]
+    # GPU: uncomment deploy.resources.devices [driver: nvidia, count: all, capabilities: [gpu]]
+
+  browser:
+    image: mcr.microsoft.com/playwright:v1.47.0-jammy
+    container_name: grok-browser
+    restart: unless-stopped
+    command: node /app/computer.js
+    volumes:
+      - ./browser-service/computer.js:/app/computer.js:ro
+      - browser_profile:/profile        # logins + cookies persist across restarts & bots
+
+  whisper:
+    image: onerahmet/whisper-asr-webservice:latest
+    restart: unless-stopped
+    profiles: ["full"]
+    environment: { ASR_MODEL: base, ASR_ENGINE: openai }
+    volumes: [./models/whisper:/root/.cache ]
+
+  piper:
+    image: rhasspy/wyoming-piper:latest
+    restart: unless-stopped
+    profiles: ["full"]
+    volumes: [./voices:/voices]
+
+  comfyui:
+    image: ghcr.io/comfyanonymous/comfyui:latest
+    restart: unless-stopped
+    profiles: ["full"]
+    volumes:
+      - comfyui_models:/home/user/comfyui/models
+      - ./data/images:/output
+
+volumes:
+  ollama_models:
+  comfyui_models:
+  browser_profile:                  # shared persistent browser computer
+  grok_workspace:                   # shared sandbox filesystem for all agents

@@ -1,9 +1,7 @@
-__pycache__/
-*.pyc
+node_modules
 .env
-workspace/
 data/
-.pytest_cache/
-*.egg-info/
-avrone.egg-info/
-.coverage
+models/
+voices/
+tests/status.json
+*.log

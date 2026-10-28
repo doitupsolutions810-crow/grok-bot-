@@ -18,7 +18,7 @@ on:
 
 jobs:
   bench:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04    # pinned: ubuntu-latest migrated to Ubuntu 26 on 2026-10-19 (actions/runner-images#14748)
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4

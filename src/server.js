@@ -38,7 +38,7 @@ async function main() {
     taskBoardTool(),                       // run-scoped task board (Avrone)
     teamAskTool(() => tools),              // delegate to a named teammate
     spawnTool(() => tools),                // depth-limited subagent spawn
-    avroneTool,                            // the concluding system bridge: delegate to AVRONE's squad                // depth-limited subagent spawn
+    avroneTool,                            // the concluding system bridge: delegate to AVRONE's squad
     ...skillTools(),                       // recorded browser skills → tools
     ...playbookTools()                     // skill.list / skill.load (SKILL.md playbooks)
   ];

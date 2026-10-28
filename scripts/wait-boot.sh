@@ -38,7 +38,12 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
       cat "$STATUS_FILE"
       exit 0
     fi
-    echo "API answered but did not report ready:true; waiting for a strict self-test result."
+    if grep -Eq '"ready"[[:space:]]*:[[:space:]]*false' "$STATUS_FILE" 2>/dev/null; then
+      cat "$STATUS_FILE"
+      fail_with_logs "API is serving in degraded mode; one or more strict boot self-tests failed"
+      exit 1
+    fi
+    echo "API answered but did not report a valid ready:true state; waiting."
   fi
 
   CID="$(docker compose ps -q grok-bot 2>/dev/null || true)"

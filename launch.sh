@@ -74,7 +74,6 @@ fi
 say "2. Grok Bot (full profile; strict live self-tests gate readiness)"
 [ -f .env ] || cp .env.full .env
 docker compose --profile full up -d --build
-step "Grok Bot boot gate"
 ./scripts/wait-boot.sh "$VERIFY_BOOT_TIMEOUT_SECONDS"
 
 say "3. Live tests (real inference, Docker exec, browser, squad)"

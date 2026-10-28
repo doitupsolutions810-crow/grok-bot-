@@ -32,7 +32,7 @@ docker compose --profile full up -d --build
 
 Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
 
-To prove the whole stack in one command — the CI-equivalent boot proof, no GitHub needed: `./verify.sh` (verdict in `data/VERIFY.md`, exit 0 = SYSTEM GREEN).
+To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
 
 ## What's inside
 
@@ -152,16 +152,29 @@ end up live: AVRONE on `:8710`, Grok Bot on `:3000`, with `EVOLVE.md` in
 
 ### Verify without CI
 
-GitHub Actions is not required to prove the boot. `./verify.sh` runs the exact
-CI sequence locally — compose config check (core + full profile), full-profile
-boot with the `ready:true` self-test gate, the 8 live tests, the agents'
-evolution loop, and AVRONE's offline suite when `../Avrone` is present — then
-writes the verdict to `data/VERIFY.md`. Exit code 0 means the system booted,
-passed its live tests, and evolved.
+GitHub Actions is not required to prove the boot. The repository's billing/runner
+availability does not sit in the local execution path: `./verify.sh` checks Docker
+and Compose, validates both Compose profiles, builds and starts the full profile,
+waits for `/api/status` to report `ready:true`, runs all live agent tests, then
+writes the evolution report and final verdict to `data/VERIFY.md`.
 
-Boot is race-hardened: required images already on the host are not re-pulled,
-and model pulls block until the model is genuinely listed by Ollama (up to 15
-min per model), so the LLM self-test can never race a slow first download.
+The verifier's default boot budget is 60 minutes because `.env.full` can enable
+LLaVA in addition to the chat and embedding models. It fails early if Docker is
+unavailable, the Compose configuration/build fails, the container exits, a restart
+loop appears, or the API reports degraded self-tests. It prints container state
+and logs on boot failure. Override the wait budget with
+`VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slow hosts.
+
+- `SYSTEM GREEN`: boot self-tests and live tests passed, EVOLVE.md was written, and the adjacent AVRONE offline suite passed.
+- `GROK BOT CORE VERIFIED / INTEGRATION PARTIAL`: all required Grok Bot checks passed, but the AVRONE repo or Python was absent.
+- To make AVRONE mandatory, run `VERIFY_REQUIRE_AVRONE=true AVRONE_DIR=../Avrone ./verify.sh`.
+- `./launch.sh` starts AVRONE first when present and health-checks its API; it reuses the same bounded boot gate for Grok Bot. If AVRONE cannot be reached, it does not falsely claim the bridge is live. Set `LAUNCH_REQUIRE_AVRONE=true` to stop the launch when the combined bridge cannot be verified.
+
+Boot is race-hardened: images already on the host are not re-pulled, required
+models must become visible in Ollama before self-tests, and the verifier's
+longer wait is sized for several sequential model pulls. The scripts do not
+pretend to run Docker when the current machine lacks a Docker daemon: on such a
+machine they fail at preflight with a diagnostic.
 
 ## Credit
 

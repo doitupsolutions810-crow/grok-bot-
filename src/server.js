@@ -72,7 +72,7 @@ async function main() {
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", makeRouter({ tools, docker }));
   app.get("/api/status", (req, res) => res.json({
-    ready: true, tools: tools.map(t => t.name), selftest: test.results
+    ready: test.ok, degraded: !test.ok, tools: tools.map(t => t.name), selftest: test.results
   }));
   app.use(express.static("public"));       // web console (public/index.html)
 

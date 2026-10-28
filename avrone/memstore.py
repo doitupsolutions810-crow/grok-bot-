@@ -141,6 +141,17 @@ class MemoryStore:
 
     def _append(self, recs: list[dict[str, Any]]) -> None:
         data = "".join(json.dumps(r) + "\n" for r in recs)
+        # A crash mid-append can leave a torn last line with no newline; appending straight
+        # onto it would glue the new record to the torn one and lose both. Start a fresh line.
+        try:
+            with self.path.open("rb") as f:
+                f.seek(0, os.SEEK_END)
+                if f.tell() > 0:
+                    f.seek(-1, os.SEEK_END)
+                    if f.read(1) != b"\n":
+                        data = "\n" + data
+        except FileNotFoundError:
+            pass
         with self.path.open("a") as f:
             f.write(data)
             f.flush()
@@ -245,3 +256,18 @@ class MemoryStore:
                 stats["merged"] += 1
             self._commit(records, spaces, pending, evicted)
         return stats
+
+    def trim(self, ns: str, keep: int) -> int:
+        """Drop the oldest keys of `ns` until at most `keep` remain (atomic rewrite).
+        Returns how many keys were evicted."""
+        keep = max(0, int(keep))
+        with self._locked():
+            spaces = self._fold(self._records())
+            space = spaces.get(ns, {})
+            extra = len(space) - keep
+            if extra <= 0:
+                return 0
+            for key in sorted(space, key=lambda k: space[k].get("ts", 0))[:extra]:
+                del space[key]
+            self._rewrite(spaces)
+        return extra

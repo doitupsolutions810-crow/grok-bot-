@@ -1,6 +1,6 @@
 [project]
 name = "avrone"
-version = "0.17.0"
+version = "0.18.0"
 description = "AVRONE: self-hosted multi-agent chat and search with Grok Heavy style orchestration, built on OpenClaw"
 requires-python = ">=3.11"
 dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "httpx>=0.27"]

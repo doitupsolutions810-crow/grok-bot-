@@ -50,7 +50,8 @@ CORE_SCHEMAS: dict[str, dict[str, dict[str, str]]] = {
     "edit_file": {"required": {"path": "str", "old": "str", "new": "str"}},
     "fetch": {"required": {"url": "str"}},
     "web_search": {"required": {"query": "str"}, "optional": {"max_results": "int"}},
-    "spawn": {"required": {"task": "str"}, "optional": {"role": "str"}},
+    "spawn": {"required": {"task": "str"}, "optional": {"role": "str", "context": "str", "focus": "str",
+                                                       "share_dir": "bool"}},
     "list_files": {"optional": {"path": "str", "depth": "int"}},
     "search_files": {"required": {"pattern": "str"}, "optional": {"path": "str"}},
     "http_request": {"required": {"method": "str", "url": "str"},
@@ -240,9 +241,8 @@ async def t_fetch(ctx: "AgentContext", args: dict[str, Any]) -> str:
 async def t_spawn(ctx: "AgentContext", args: dict[str, Any]) -> str:
     if ctx.depth >= ctx.core.settings.max_spawn_depth:
         return "ERROR: max sub-agent depth reached; do this part yourself."
-    return await ctx.core.run_agent(
-        run_id=ctx.run_id, role=str(args.get("role", "Helper")), task=str(args.get("task", "")),
-        parent=ctx.name, depth=ctx.depth + 1)
+    from .ctxspawn import spawn  # ctxspawn: context pack, lineage, agent cap, share_dir
+    return await spawn(ctx, args)
 
 
 def builtin_registry() -> ToolRegistry:
@@ -251,5 +251,5 @@ def builtin_registry() -> ToolRegistry:
     r.register(Tool("read_file", "read a file. With your own agent dir, paths are relative to it; prefix `shared/` (e.g. shared/notes.md) to reach the shared team workspace. No absolute paths or '..'.", '{"path": str}', t_read))
     r.register(Tool("write_file", "create or overwrite a file. Relative paths land in your own persistent agent dir (quota applies); prefix `shared/` to write to the shared team workspace.", '{"path": str, "content": str}', t_write))
     r.register(Tool("fetch", "HTTP GET a URL and return its text (first 8000 chars).", '{"url": str}', t_fetch))
-    r.register(Tool("spawn", "spawn a sub-agent to handle a piece of your task; returns its result.", '{"role": str, "task": str}', t_spawn))
+    r.register(Tool("spawn", "spawn a sub-agent to handle a piece of your task; returns its result. context: full (default: it sees the run task, lineage, your recent tool calls, memory and file names) | summary | none; share_dir=true lets it read (not write) your agent dir as parent/.", '{"role": str, "task": str, "context"?: str, "focus"?: str, "share_dir"?: bool}', t_spawn))
     return r

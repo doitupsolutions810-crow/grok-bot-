@@ -1206,3 +1206,5 @@ def register_extra_tools(registry) -> None:
     register_agent_fs_tools(registry)
     from .agentpack_tools import register_agentpack_tools
     register_agentpack_tools(registry)
+    from .bridge import register_bridge_tools
+    register_bridge_tools(registry)

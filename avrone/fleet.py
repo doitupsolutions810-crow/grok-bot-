@@ -69,6 +69,20 @@ Governor-aware routing (edgeroute):
                        (spread). A remote failure/timeout (AVRONE_FLEET_OFFLOAD_TIMEOUT, default 300 s) runs
                        that worker locally instead. Privileged runs are never offloaded; hops, allowlist and
                        the outbound gateway checks all apply. Audited as fleet.offload / fleet.offload_fallback.
+netsquad (squad mode dispatched into the node network):
+  AVRONE_SQUAD_DISPATCH  local|network|hybrid (default local = unchanged). network places EVERY squad
+                       subtask on a node from select_nodes (healthy, allowlisted, advertising capability
+                       squad:net), round-robin by score; hybrid keeps the governor's local limit here and
+                       places the rest. Each placement runs on that node as a sub-squad of the same subtask
+                       (AVRONE_NET_SUBSQUAD, default 2, max 4; AVRONE_NET_WORKER_MODE=chat runs one agent).
+                       The receiving node may place further down its own children while hops < MAX_HOPS,
+                       never back to a node already on the route (fleet.cycle_refused). Caps:
+                       AVRONE_NET_MAX_NODES (8) per squad, AVRONE_NET_MAX_REMOTE_AGENTS (32) per run (the
+                       budget rides down the tree). Remote error/timeout/empty answer runs that subtask
+                       locally (fleet.netsquad_fallback). Privileged runs never leave the node; the
+                       outbound gateway checks and allowlist always apply. Placements are audited as
+                       fleet.netsquad_place and counted per node. An optional core.bridge (export(since),
+                       merge_remote(posts, origin_node)) relays bridge posts both ways (50 posts / 64 KB).
 Run nodes over HTTPS or a private mesh (Tailscale/WireGuard); the HMAC protects
 integrity and auth, not confidentiality.
 """
@@ -120,6 +134,9 @@ PRIVILEGED_CAPABILITIES = {"priv:shell", "priv:admin"}
 PRIVILEGED_HEADER = "x-avrone-privileged"
 # non-spawn capabilities, kept apart from the (minimal) spawn/message table above
 SYNC_CAPABILITIES: dict[str, set[str]] = {"memory": {"memory:sync"}, "agentpack": {"agent:migrate"}}
+# netsquad: a squad subtask placed on this node (runs as a sub-squad/chat here, may recurse further down)
+NET_CAPABILITIES: dict[str, set[str]] = {"run": {"squad:net"}}
+NETSQUAD_CAP = "squad:net"
 MEMORY_PATH = "/api/fleet/memory"
 MEMORY_SYNC_MAX_ENTRIES = 200
 AGENTPACK_PATH = "/api/fleet/agentpack"
@@ -161,6 +178,107 @@ def offload_timeout() -> float:
     except ValueError:
         t = 300.0
     return max(5.0, min(t, 900.0))
+
+
+# ------------------------------------------------------------ netsquad (squad -> node network)
+SQUAD_DISPATCH_MODES = ("local", "network", "hybrid")
+NET_WORKER_MODES = ("squad", "chat")
+NET_SUBSQUAD_MAX = 4
+BRIDGE_MAX_POSTS, BRIDGE_MAX_BYTES = 50, 64 * 1024
+
+
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    try:
+        v = int(_env(name, str(default)) or default)
+    except ValueError:
+        v = default
+    return max(lo, min(v, hi))
+
+
+def squad_dispatch(override: str | None = None) -> str:
+    """AVRONE_SQUAD_DISPATCH=local|network|hybrid (default local); a valid per-request override wins."""
+    if override in SQUAD_DISPATCH_MODES:
+        return str(override)
+    v = _env("AVRONE_SQUAD_DISPATCH", "local").lower()
+    return v if v in SQUAD_DISPATCH_MODES else "local"
+
+
+def net_worker_mode() -> str:
+    v = _env("AVRONE_NET_WORKER_MODE", "squad").lower()
+    return v if v in NET_WORKER_MODES else "squad"
+
+
+def net_subsquad() -> int:
+    return _env_int("AVRONE_NET_SUBSQUAD", 2, 1, NET_SUBSQUAD_MAX)
+
+
+def net_max_nodes() -> int:
+    return _env_int("AVRONE_NET_MAX_NODES", 8, 1, 64)
+
+
+def net_max_remote_agents() -> int:
+    return _env_int("AVRONE_NET_MAX_REMOTE_AGENTS", 32, 1, 1024)
+
+
+def cap_bridge_posts(posts: Any) -> list[dict[str, Any]]:
+    """Newest-last list of JSON-able dict posts, at most BRIDGE_MAX_POSTS and BRIDGE_MAX_BYTES."""
+    if not isinstance(posts, (list, tuple)):
+        return []
+    out = []
+    for p in list(posts)[-BRIDGE_MAX_POSTS:]:
+        if not isinstance(p, dict):
+            continue
+        try:
+            json.dumps(p)
+        except (TypeError, ValueError):
+            continue
+        out.append(p)
+    while out and len(json.dumps(out).encode()) > BRIDGE_MAX_BYTES:
+        out.pop(0)  # drop the oldest first
+    return out
+
+
+def bridge_of(core: Any, run_id: Any = None) -> Any:
+    """The run's Bridge (avrone.bridge.for_core) when run_id is given and the bridge module is
+    available, else core.bridge when it offers export + merge_remote, else None (optional)."""
+    if run_id:
+        try:
+            from . import bridge as bridgemod
+            return bridgemod.for_core(core, str(run_id))
+        except Exception as e:  # noqa: BLE001  -- the relay is best-effort
+            log.debug("run bridge unavailable: %s", e)
+    b = getattr(core, "bridge", None)
+    if b is None or not callable(getattr(b, "export", None)) or not callable(getattr(b, "merge_remote", None)):
+        return None
+    return b
+
+
+def bridge_export(core: Any, since: Any = None, run_id: Any = None,
+                  only_origin: str | None = None) -> list[dict[str, Any]]:
+    b = bridge_of(core, run_id)
+    if b is None:
+        return []
+    try:
+        posts = b.export(since)
+        if only_origin is not None:  # send back only what this node's agents wrote
+            posts = [p for p in posts if isinstance(p, dict) and p.get("origin_node") == only_origin]
+        return cap_bridge_posts(posts)
+    except Exception as e:  # noqa: BLE001  -- the relay is best-effort
+        log.debug("bridge export failed: %s", e)
+        return []
+
+
+def bridge_merge(core: Any, posts: Any, origin: str, run_id: Any = None) -> int:
+    b = bridge_of(core, run_id)
+    posts = cap_bridge_posts(posts)
+    if b is None or not posts:
+        return 0
+    try:
+        b.merge_remote(posts, origin)
+        return len(posts)
+    except Exception as e:  # noqa: BLE001
+        log.debug("bridge merge from %s failed: %s", origin, e)
+        return 0
 
 
 def local_health(core: Any) -> dict[str, Any] | None:
@@ -234,7 +352,7 @@ def node_has(n: dict[str, Any], need: str | None) -> bool:
 
 
 def kind_capabilities(kind: str) -> set[str]:
-    return CAPABILITIES.get(kind) or SYNC_CAPABILITIES.get(kind) or set()
+    return set(CAPABILITIES.get(kind) or SYNC_CAPABILITIES.get(kind) or set()) | NET_CAPABILITIES.get(kind, set())
 
 
 class GatewayRefused(PermissionError):
@@ -308,6 +426,7 @@ class FleetManager:
         self._bg: set[asyncio.Task] = set()
         self.queue = None  # JobQueue, attached by start_queue()
         self.worker = None
+        self.netsquad_counts: dict[str, int] = {}  # node id -> netsquad placements (telemetry)
         self._save()
 
     # ------------------------------------------------------------ state
@@ -365,7 +484,8 @@ class FleetManager:
             rows.append({"node_id": n.get("node_id"), "status": st, "state": hs,
                          "score": health_score(n) if st == "online" else None,
                          "eligible": st == "online" and hs not in EXCLUDED_STATES and self.allowed(str(n.get("node_id"))),
-                         "load": n.get("load", 0), "health": n.get("health")})
+                         "load": n.get("load", 0), "health": n.get("health"),
+                         "netsquad": self.netsquad_counts.get(str(n.get("node_id")), 0)})
         return rows
 
     def info(self) -> dict[str, Any]:
@@ -404,6 +524,11 @@ class FleetManager:
         return node_id in self.allow
 
     def _audit(self, event: str, **kw: Any) -> None:
+        # Codex.emit(run_id, kind, agent, **data): a payload key with one of those names would
+        # collide (TypeError, so the audit was silently lost); prefix it with "req_" instead.
+        for k in ("run_id", "kind", "agent"):
+            if k in kw:
+                kw[f"req_{k}"] = kw.pop(k)
         try:
             self.core.codex.emit("fleet", event, self.node_id, **kw)
         except Exception as e:  # noqa: BLE001  -- auditing must never mask the decision
@@ -563,6 +688,161 @@ class FleetManager:
             reason = f"{type(e).__name__}: {e}"[:300]
             self._audit("fleet.offload_fallback", squad_run=run_id, node=node_id, role=role, reason=reason)
             raise RuntimeError(f"offload to {node_id} failed: {reason}") from e
+
+    # ------------------------------------------------------------ netsquad (squad -> node network)
+    def squad_dispatch(self, override: str | None = None) -> str:
+        return squad_dispatch(override) if self.enabled else "local"
+
+    def netsquad_plan(self, n: int, local_limit: int, hops: int = 0, path: list[str] | None = None,
+                      dispatch: str | None = None, budget: int | None = None) -> dict[int, str]:
+        """{subtask index: node id} for the subtasks a squad of n places on the network.
+        network = every subtask, hybrid = the ones past the local governor limit; nodes come from
+        select_nodes (healthy, allowlisted, advertising squad:net), round-robin by score, never a
+        node already on the route (audited fleet.cycle_refused), at most AVRONE_NET_MAX_NODES nodes
+        and AVRONE_NET_MAX_REMOTE_AGENTS remote agents. Indices left out run locally."""
+        mode = self.squad_dispatch(dispatch)
+        if mode == "local" or n <= 0 or hops >= self.max_hops:
+            return {}
+        idx = list(range(n)) if mode == "network" else list(range(max(0, int(local_limit)), n))
+        if not idx:
+            return {}
+        route = [str(x) for x in (path or [])]
+        visited = set(route) | {self.node_id}
+        nodes: list[str] = []
+        for nd in self.select_nodes(len(self.nodes), need=NETSQUAD_CAP):
+            nid = str(nd.get("node_id"))
+            if nid in visited:
+                self._audit("fleet.cycle_refused", node=nid, route=route + [self.node_id], direction="out")
+                continue
+            nodes.append(nid)
+        nodes = nodes[:net_max_nodes()]
+        if not nodes:
+            return {}
+        size = self.netsquad_size()
+        cap = net_max_remote_agents() if budget is None else max(0, min(net_max_remote_agents(), int(budget)))
+        fit = cap // size
+        if fit < len(idx):
+            self._audit("fleet.netsquad_capped", wanted=len(idx), placed=fit, size=size, cap=cap)
+            idx = idx[:fit]
+        return {i: nodes[j % len(nodes)] for j, i in enumerate(idx)}
+
+    @staticmethod
+    def netsquad_size() -> int:
+        """Remote agents one placement spawns: the sub-squad size, or 1 in chat worker mode."""
+        return net_subsquad() if net_worker_mode() == "squad" else 1
+
+    def netsquad_share(self, placements: int, budget: int | None = None) -> int:
+        """Remote-agent budget handed to each placement's subtree (its own sub-squad + any recursion)."""
+        cap = net_max_remote_agents() if budget is None else max(1, min(net_max_remote_agents(), int(budget)))
+        return max(self.netsquad_size(), cap // max(1, int(placements)))
+
+    async def netsquad_worker(self, run_id: str, node_id: str, role: str, task: str, focus: str,
+                              hops: int = 0, path: list[str] | None = None,
+                              budget: int | None = None) -> dict[str, Any]:
+        """Place one squad subtask on `node_id`: it runs there as a sub-squad (or chat) of the same
+        subtask and may place further down. Returns {answer, node, route}. Raises after auditing
+        fleet.netsquad_fallback on any failure/timeout/empty answer; the caller runs it locally."""
+        mode = net_worker_mode()
+        size = self.netsquad_size()
+        route = [str(x) for x in (path or [])] + [self.node_id]
+        prompt = (f"You are {role}, one placed worker of a squad on another AVRONE node.\nTASK: {task}\n"
+                  f"YOUR SUBTASK: {focus}\nSolve this subtask and report your findings for it only.")
+        self._audit("fleet.netsquad_place", squad_run=run_id, node=node_id, role=role, size=size, mode=mode,
+                    hops=hops, route=route)
+        self.netsquad_counts[node_id] = self.netsquad_counts.get(node_id, 0) + 1
+        node: dict[str, Any] | None = None
+        bumped = False
+        try:
+            self.check_outbound("run", NETSQUAD_CAP, hops, node_id)
+            if node_id in route:
+                self._audit("fleet.cycle_refused", node=node_id, route=route, direction="out")
+                raise PermissionError(f"cycle: {node_id} already on route {'/'.join(route)}")
+            node = self.pick(node_id)
+            payload: dict[str, Any] = {
+                "route": [], "mode": mode, "prompt": prompt, "n": size if mode == "squad" else None,
+                "hops": hops + 1, "from": self.node_id, "origin_run": run_id, "capability": NETSQUAD_CAP,
+                "netsquad": {"path": route, "role": str(role)[:60],
+                             "budget": max(size, int(budget if budget is not None else size))}}
+            posts = bridge_export(self.core, run_id=run_id)
+            if posts:
+                payload["bridge"] = posts
+            node["load"] = node.get("load", 0) + 1
+            bumped = True
+            t = offload_timeout()
+            res = await asyncio.wait_for(self._post(node["url"], "/api/fleet/run", payload, timeout=t), t)
+            answer = str((res or {}).get("answer") or "").strip()
+            if not answer:
+                raise RuntimeError("empty answer from remote squad")
+            bridge_merge(self.core, res.get("bridge"), node_id, run_id=run_id)
+            sub = [str(x) for x in (res.get("path") or [node_id]) if isinstance(x, (str, int))][:16]
+            return {"answer": answer, "node": node_id, "route": route + (sub or [node_id])}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001  -- includes TimeoutError and gateway refusals
+            reason = f"{type(e).__name__}: {e}"[:300]
+            self._audit("fleet.netsquad_fallback", squad_run=run_id, node=node_id, role=role, reason=reason)
+            raise RuntimeError(f"netsquad to {node_id} failed: {reason}") from e
+        finally:
+            if bumped and node is not None:
+                node["load"] = max(0, node.get("load", 1) - 1)
+
+    def _netsquad_refuse(self, code: str, message: str, **kw: Any) -> PermissionError:
+        self._audit("fleet.refused", code=code, reason=message, endpoint="run", capability=NETSQUAD_CAP, **kw)
+        return PermissionError(message)
+
+    async def _handle_netsquad(self, payload: dict[str, Any], hops: int) -> dict[str, Any]:
+        """Receiving side of a netsquad placement: run the subtask here as a sub-squad (or chat)."""
+        sender = sender_node(payload.get("from"))
+        if payload.get("capability") != NETSQUAD_CAP:
+            raise self._netsquad_refuse("capability", "netsquad job requires capability 'squad:net'", sender=sender)
+        if payload.get("privileged", False) is not False:
+            raise self._netsquad_refuse("privileged_capability", "netsquad jobs are never privileged", sender=sender)
+        if payload.get("route"):
+            raise self._netsquad_refuse("bad_route", "netsquad jobs are placed on a direct child (empty route)",
+                                        sender=sender)
+        ns = payload.get("netsquad")
+        path = ns.get("path") if isinstance(ns, dict) else None
+        if (not isinstance(path, list) or not path or len(path) > self.max_hops + 1
+                or not all(isinstance(x, str) and ID_RE.match(x) for x in path)):
+            raise self._netsquad_refuse("bad_netsquad", "netsquad job needs a valid route path", sender=sender)
+        if self.node_id in path:
+            self._audit("fleet.cycle_refused", node=self.node_id, route=path, sender=sender, direction="in")
+            raise PermissionError(f"cycle refused: {self.node_id} already on route {'/'.join(path)}")
+        if sender and path[-1] != sender:
+            raise self._netsquad_refuse("bad_netsquad", "netsquad route does not end at the signed sender",
+                                        sender=sender)
+        mode = str(payload.get("mode", "squad"))
+        if mode not in NET_WORKER_MODES:
+            raise self._netsquad_refuse("bad_netsquad", f"netsquad mode must be squad or chat, got {mode!r}",
+                                        sender=sender)
+        try:
+            n = max(1, min(int(payload.get("n") or 2), NET_SUBSQUAD_MAX))
+            budget = max(1, min(int(ns.get("budget") or n), net_max_remote_agents()))
+        except (TypeError, ValueError):
+            raise self._netsquad_refuse("bad_netsquad", "bad netsquad size/budget", sender=sender) from None
+        prompt = str(payload.get("prompt", ""))
+        c = self.core
+        self._audit("fleet.run", mode=mode, frm=payload.get("from"), hops=hops, netsquad=True, size=n, route=path)
+        # One bridge per (sender, origin run): the sender's posts are merged in first, the remote
+        # squad runs under that id so its agents read them, and only posts written here go back.
+        origin_run = re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("origin_run") or ""))[:40]
+        rid = f"net-{sender or path[-1]}-{origin_run}" if origin_run else None
+        bridge_merge(c, payload.get("bridge"), sender or path[-1], run_id=rid)
+        prev = (getattr(c, "fleet_hops", 0), getattr(c, "netsquad_path", None), getattr(c, "netsquad_budget", None))
+        c.fleet_hops, c.netsquad_path, c.netsquad_budget = hops, list(path), budget
+        try:
+            if rid:
+                res = await (c.chat(prompt, run_id=rid) if mode == "chat" else c.squad(prompt, n, run_id=rid))
+            else:
+                res = await (c.chat(prompt) if mode == "chat" else c.squad(prompt, n))
+        finally:
+            c.fleet_hops, c.netsquad_path, c.netsquad_budget = prev
+        out = {"node": self.node_id, "path": [self.node_id], "run_id": res.get("run_id"),
+               "answer": res.get("answer") or "", "netsquad": True}
+        posts = bridge_export(c, run_id=rid or res.get("run_id"), only_origin=self.node_id)
+        if posts:
+            out["bridge"] = posts
+        return out
 
     # ------------------------------------------------------------ registry (server side)
     def register(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -808,7 +1088,8 @@ class FleetManager:
     async def join_parent_once(self) -> dict[str, Any]:
         from .presence import snapshot
         payload = {"presence": await snapshot(self.core),"node_id": self.node_id, "url": self.public_url,
-                   "capabilities": {"tools": self.core.tools.names(), "runner": self.core.runner.kind},
+                   "capabilities": {"tools": self.core.tools.names(), "runner": self.core.runner.kind,
+                                    NETSQUAD_CAP: True},
                    "children": sorted(self.nodes), "load": self.info()["active_agents"],
                    "health": local_health(self.core)}
         return await self._post(self.parent, "/api/fleet/register", payload, timeout=10)
@@ -956,6 +1237,8 @@ class FleetManager:
         mode, prompt = str(payload.get("mode", "squad")), str(payload.get("prompt", ""))
         if hops > self.max_hops:
             raise PermissionError("max fleet hops exceeded")
+        if payload.get("capability") == NETSQUAD_CAP or payload.get("netsquad") is not None:
+            return await self._handle_netsquad(payload, hops)
         priv = ""
         if payload.get("privileged", False) is not False or payload.get("capability") in PRIVILEGED_CAPABILITIES:
             # defense in depth: re-run the gate even though the HTTP path already passed dispatch_gateway
@@ -1063,7 +1346,10 @@ async def t_remote_spawn(ctx: "AgentContext", args: dict[str, Any]) -> str:
 async def t_remote_broadcast(ctx: "AgentContext", args: dict[str, Any]) -> str:
     f = _fleet(ctx)
     targets = args.get("nodes") or [n["node_id"] for n in f.list_nodes() if n["status"] == "online"]
-    targets = list(dict.fromkeys(str(t) for t in targets))[:8]
+    # Normalize each route ("good/", "/good", " good " are all "good") before de-duplicating, and
+    # drop empty ones: an empty route would silently become an "auto" pick of some other node.
+    routes = ("/".join(p.strip() for p in str(t).split("/") if p.strip()) for t in targets)
+    targets = list(dict.fromkeys(r for r in routes if r))[:8]
     if not targets:
         return "ERROR: no online nodes"
     hops = getattr(ctx.core, "fleet_hops", 0)

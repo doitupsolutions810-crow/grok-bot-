@@ -43,6 +43,8 @@ def telemetry(core: "TrinityCore", window_s: float = 86400) -> dict[str, Any]:
     tool_latency: dict[str, list[float]] = defaultdict(list)
     throttles: list[dict[str, Any]] = []
     resumes = 0
+    net_place: Counter[str] = Counter()
+    net_fallback = 0
 
     for ev in _iter_events(core.codex.log_dir, since):
         rid, kind, agent, data, ts = ev.get("run_id"), ev.get("kind"), ev.get("agent", ""), ev.get("data", {}), ev.get("ts", 0)
@@ -71,6 +73,10 @@ def telemetry(core: "TrinityCore", window_s: float = 86400) -> dict[str, Any]:
                               "parallel": data.get("parallel"), "reason": data.get("reason")})
         elif kind == "checkpoint.resume":
             resumes += 1
+        elif kind == "fleet.netsquad_place":
+            net_place[str(data.get("node", "?"))] += 1
+        elif kind == "fleet.netsquad_fallback":
+            net_fallback += 1
 
     done = [r for r in runs.values() if r["end"]]
     durations = sorted(r["end"] - r["start"] for r in done)
@@ -92,6 +98,8 @@ def telemetry(core: "TrinityCore", window_s: float = 86400) -> dict[str, Any]:
         "recent_runs": sorted(runs.values(), key=lambda r: r["start"], reverse=True)[:10],
         "node": node_health(core),
         "fleet_nodes": fleet_health(core),
+        "netsquad": {"placements": sum(net_place.values()), "by_node": dict(net_place.most_common()),
+                     "fallbacks": net_fallback},
         "resilience": {"throttles": len(throttles), "checkpoint_resumes": resumes,
                        "recent_throttles": sorted(throttles, key=lambda t: t["ts"], reverse=True)[:5]},
     }
@@ -197,6 +205,11 @@ def system_map(core: "TrinityCore", window_s: float = 86400) -> dict[str, Any]:
                 edges[(f"tool:{tool}", "runner")] += 1
         elif kind == "lead.merge":
             edges[("core", "model:lead")] += 1
+        elif kind == "fleet.netsquad_place":  # a squad subtask placed on a remote node (netsquad)
+            nid = str(data.get("node", "?"))
+            node(f"node:{nid}", "node", nid)
+            nodes[f"node:{nid}"]["netsquad"] = nodes[f"node:{nid}"].get("netsquad", 0) + 1
+            edges[("fleet" if "fleet" in nodes else "core", f"node:{nid}")] += 1
 
     # fix parent edges that point at an unknown role node
     out_edges = []

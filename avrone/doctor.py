@@ -221,6 +221,9 @@ def run_doctor(settings: Any = None, *, env: Mapping[str, str] | None = None,
         "fleet_offload": ((env.get("AVRONE_FLEET_OFFLOAD") or "off").strip().lower()
                           if (env.get("AVRONE_FLEET_OFFLOAD") or "off").strip().lower() in ("off", "spill", "spread")
                           else "off"),
+        "squad_dispatch": ((env.get("AVRONE_SQUAD_DISPATCH") or "local").strip().lower()
+                           if (env.get("AVRONE_SQUAD_DISPATCH") or "local").strip().lower() in ("local", "network", "hybrid")
+                           else "local"),
         "privileged_nodes": str(len([h for h in (env.get("AVRONE_PRIVILEGED_NODES") or "").split(",") if h.strip()])),
         "agent_container": ("persistent" if (env.get("AVRONE_AGENT_CONTAINER") or "").strip().lower() == "persistent"
                             else "off"),
@@ -298,6 +301,11 @@ def _insecure_combos(settings: Any, env: Mapping[str, str], toggles: dict[str, s
                                                          "AVRONE_FLEET_ALLOW: squad work (task text) may go to any node "
                                                          "that registers with the token",
                          "pin AVRONE_FLEET_ALLOW to the node ids you trust, or AVRONE_FLEET_OFFLOAD=off"))
+    if toggles["fleet"] == "on" and toggles.get("squad_dispatch", "local") != "local" and not fleet_allow:
+        out.append(Check("security.squad_dispatch", WARN, f"AVRONE_SQUAD_DISPATCH={toggles['squad_dispatch']} with an "
+                                                          "open AVRONE_FLEET_ALLOW: squad subtasks (task text) may be "
+                                                          "placed on any node that registers with the token",
+                         "pin AVRONE_FLEET_ALLOW to the node ids you trust, or AVRONE_SQUAD_DISPATCH=local"))
     if toggles.get("agent_migrate") == "on":
         if not fleet_allow:
             out.append(Check("security.agent_migrate", WARN, "AVRONE_AGENT_MIGRATE=on with an open AVRONE_FLEET_ALLOW: "

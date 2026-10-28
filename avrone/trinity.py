@@ -15,6 +15,14 @@ LEAD writes a verdict report. With rounds > 1 (arg, settings.deep_rounds or env
 AVRONE_DEEP_ROUNDS, capped at MAX_DEEP_ROUNDS) further waves stress-test the
 previous round's corrected answer, stopping early once a wave reports no new
 corrections (converged).
+
+Learning bridge (avrone.bridge): every agent of a run shares one blackboard. With
+AVRONE_BRIDGE_ROUNDS > 0 (default 1, max 3) a squad runs a cross-examination round between
+the workers and the Lead merge: each usable worker gets one revise turn with the others'
+results and the bridge, may post corrections/conclusions and revise its result; rounds stop
+early once one adds no correction, and the Lead sees the bridge digest. 0 = the classic squad.
+Conclusions are distilled into a "lessons" memory namespace at run end and matched back into
+later runs' worker prompts (AVRONE_LESSONS=off disables).
 """
 from __future__ import annotations
 
@@ -24,14 +32,17 @@ import time
 import json
 import re
 import uuid
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import agentfs
+from . import agentfs, memstore
+from . import bridge as bridgemod
 from .checkpoint import Checkpoint
 from .codex import Codex
 from .config import Settings
+from .ctxspawn import RECENT_CALLS
 from .governor import Governor
 from .llm import LLM, LLMError
 from .sovereign import Runner
@@ -244,6 +255,17 @@ class AgentContext:
     # the same agent_id. None when AVRONE_AGENT_FS=0 or the dir could not be made.
     agent_id: str | None = None
     agent_dir: Path | None = None
+    # Pinned memory namespace; None = derived from the name (memstore.agent_namespace). Set only
+    # when two live agents of one run would otherwise share a namespace (see _claim_identity).
+    memory_namespace: str | None = None
+    # ctxspawn: who started this agent and what a child of it inherits (see avrone.ctxspawn).
+    role: str | None = None
+    focus: str | None = None
+    run_task: str | None = None          # the run's original task, inherited down the tree
+    parent_name: str | None = None
+    lineage: list[str] = field(default_factory=list)  # root -> ... -> parent (names)
+    parent_dir: Path | None = None       # parent's agent dir, readable via parent/ (share_dir)
+    recent_calls: deque = field(default_factory=lambda: deque(maxlen=RECENT_CALLS))  # (tool, args, output)
 
 
 def parse_action(text: str) -> dict[str, Any] | None:
@@ -324,6 +346,8 @@ class TrinityCore:
         self.governor = Governor.from_settings(settings)
         self.active: dict[str, dict[str, Any]] = {}  # agent name -> status, for the HUD
         self.inbox: dict[str, list[str]] = {}  # agent name -> messages waiting for its next step
+        self.run_agents: dict[str, int] = {}  # run id -> agents started (AVRONE_MAX_AGENTS_PER_RUN)
+        self.squad_roles: dict[str, list[dict[str, str]]] = {}  # run id -> squad roles/focuses
 
     def message_agent(self, name: str, text: str, sender: str = "operator") -> bool:
         """Queue a message for a live agent; it reads it before its next step. False if not live."""
@@ -337,6 +361,28 @@ class TrinityCore:
     def _name(self, role: str) -> str:
         self._counter += 1
         return f"{re.sub(r'[^A-Za-z0-9]', '', str(role or ''))[:16] or 'Agent'}-{self._counter}"
+
+    def _claim_identity(self, run_id: str, name: str, agent_id: Any) -> tuple[str, str | None]:
+        """(agent dir id, pinned memory namespace or None) for a new agent of `run_id`.
+
+        Roles that sanitize alike ("Builder!" / "Builder?") would make two LIVE agents of one run
+        share a home dir and memory namespace. The first keeps the plain id (so the same role
+        keeps its persistence across runs); later concurrent ones get a -2, -3... suffix on both.
+        An agent that has finished frees its id: a sequential re-spawn is the same agent."""
+        base = agentfs.sanitize_agent_id(agent_id)
+        ns_base = memstore.agent_namespace(name)
+        live = [a for a in self.active.values()
+                if a.get("run_id") == run_id and a.get("status") == "working"]
+        ids = {a.get("agent_id") for a in live}
+        spaces = {a.get("memory_ns") for a in live}
+        k = 1
+        aid, ns = base, ns_base
+        while aid in ids or ns in spaces:
+            k += 1
+            sfx = f"-{k}"
+            aid = base[:agentfs.MAX_ID_LEN - len(sfx)].rstrip("-_") + sfx
+            ns = ns_base[:63 - len(sfx)].rstrip("-_") + sfx
+        return aid, (ns if k > 1 else None)
 
     def _attach_agent_dir(self, ctx: AgentContext, agent_id: Any) -> None:
         """Give the agent its own persistent dir. Never fatal: on failure the agent runs as before."""
@@ -359,17 +405,36 @@ class TrinityCore:
     # ------------------------------------------------------------ one agent
     async def run_agent(self, run_id: str, role: str, task: str, focus: str | None = None,
                         parent: str | None = None, depth: int = 0, system: str | None = None,
-                        agent_id: str | None = None) -> str:
+                        agent_id: str | None = None, lineage: list[str] | None = None,
+                        run_task: str | None = None, context_pack: str = "",
+                        context_mode: str | None = None, parent_dir: Path | None = None) -> str:
         name = self._name(role)
-        ctx = AgentContext(self, run_id, name, depth)
-        self._attach_agent_dir(ctx, agent_id or role)
+        ctx = AgentContext(self, run_id, name, depth, role=role, focus=focus, run_task=run_task or task,
+                           parent_name=parent, lineage=list(lineage or []))
+        self.run_agents[run_id] = self.run_agents.get(run_id, 0) + 1
+        claimed, ctx.memory_namespace = self._claim_identity(run_id, name, agent_id or role)
+        self._attach_agent_dir(ctx, claimed)
+        if parent_dir is not None and ctx.agent_dir is not None:
+            ctx.parent_dir = Path(parent_dir)
+        # agent_id is recorded even when agent fs is off, so the claim (and fleet.idle_agents'
+        # busy check) sees it; no await between claim and registration, so no race.
         self.active[name] = {"role": role, "status": "working", "parent": parent, "run_id": run_id,
-                             "task": (focus or task)[:300], "depth": depth, "started": time.time()}
-        self.codex.emit(run_id, "agent.spawn", name, role=role, focus=focus or task, parent=parent, depth=depth)
+                             "task": (focus or task)[:300], "depth": depth, "started": time.time(),
+                             "agent_id": claimed,
+                             "memory_ns": ctx.memory_namespace or memstore.agent_namespace(name)}
+        self.codex.emit(run_id, "agent.spawn", name, role=role, focus=focus or task, parent=parent, depth=depth,
+                        context_mode=context_mode, context_chars=len(context_pack or ""),
+                        lineage=ctx.lineage, share_dir=ctx.parent_dir is not None)
+        prompt = (system or WORKER_PROMPT).format(
+            name=name, role=role, task=task, focus=focus or task, tools=self.tools.docs(),
+            steps=self.settings.max_steps, max_calls=max_calls_per_turn())
+        if context_pack:
+            prompt += "\n\n" + context_pack
+        if ctx.parent_dir is not None:
+            prompt += ("\n\nYour parent's agent dir is readable (not writable) under the `parent/` "
+                       "prefix in read_file/list_files/search_files/diff_files.")
         messages = [
-            {"role": "system", "content": (system or WORKER_PROMPT).format(
-                name=name, role=role, task=task, focus=focus or task, tools=self.tools.docs(),
-                steps=self.settings.max_steps, max_calls=max_calls_per_turn())},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": "Begin."},
         ]
         result = ""
@@ -392,7 +457,10 @@ class TrinityCore:
             # "working" agent and message_agent stops accepting messages for it.
             if name in self.active:
                 self.active[name]["status"] = "done"
-            self.inbox.pop(name, None)
+            dropped = self.inbox.pop(name, None)
+            if dropped:  # arrived during the agent's last turn: it never read them; say so
+                self.codex.emit(run_id, "agent.message_dropped", name, count=len(dropped),
+                                messages=[m[:500] for m in dropped[:5]])
         self.codex.emit(run_id, "agent.done", name, result=result[:6000])
         return result
 
@@ -501,6 +569,10 @@ class TrinityCore:
             except Exception as e:  # a crash in one call is that call's result, never the turn's
                 out = f"ERROR: {type(e).__name__}: {e}"
             out = out if isinstance(out, str) else str(out)
+        try:
+            ctx.recent_calls.append((tool, args, out[:2000]))  # ctxspawn ring buffer
+        except AttributeError:  # pragma: no cover - foreign ctx objects
+            pass
         self.codex.emit(run_id, "tool.result", name, tool=tool, output=out[:4000])
         return tool, out
 
@@ -551,6 +623,49 @@ class TrinityCore:
         try:
             return await self.fleet.offload_worker(run_id, node, str(s.get("role")), task, str(s["focus"]),
                                                    int(getattr(self, "fleet_hops", 0) or 0))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            async with gate:
+                return await local()
+
+    def _netsquad_plan(self, run_id: str, n: int, dispatch: str | None = None
+                       ) -> "tuple[int, dict[int, str]] | None":
+        """netsquad: (governor limit, {subtask index: node id}) when squad dispatch is network or
+        hybrid, else None (local = unchanged). Privileged runs never leave the node."""
+        fleet = getattr(self, "fleet", None)
+        try:
+            if fleet is None or not getattr(fleet, "enabled", False) or fleet.squad_dispatch(dispatch) == "local":
+                return None
+        except Exception:
+            return None
+        if self._privileged_run() or n <= 0:
+            return None
+        limit = self._worker_limit(run_id, n)
+        try:
+            remote = dict(fleet.netsquad_plan(n, limit, int(getattr(self, "fleet_hops", 0) or 0),
+                                              self._netsquad_path(), dispatch, self._netsquad_budget()))
+        except Exception:
+            remote = {}
+        return limit, {int(i): str(v) for i, v in remote.items() if 0 <= int(i) < n}
+
+    def _netsquad_path(self) -> list[str]:
+        p = getattr(self, "netsquad_path", None)
+        return [str(x) for x in p] if isinstance(p, list) else []
+
+    def _netsquad_budget(self) -> int | None:
+        b = getattr(self, "netsquad_budget", None)
+        return b if isinstance(b, int) and not isinstance(b, bool) else None
+
+    async def _netsquad(self, run_id: str, i: int, node: str, s: dict[str, str], task: str, share: int,
+                        gate: asyncio.Semaphore, local: Any, placed: dict[int, dict[str, Any]]) -> str:
+        """Run subtask `s` as a sub-squad on `node`; on any remote failure run it here, behind the gate."""
+        try:
+            r = await self.fleet.netsquad_worker(run_id, node, str(s.get("role")), task, str(s["focus"]),
+                                                 int(getattr(self, "fleet_hops", 0) or 0),
+                                                 self._netsquad_path(), share)
+            placed[i] = {"node": r.get("node", node), "route": list(r.get("route") or [])}
+            return str(r["answer"])
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -625,8 +740,11 @@ class TrinityCore:
         return subtasks
 
     async def squad(self, task: str, n: int | None = None, run_id: str | None = None,
-                    checkpoint: "Checkpoint | str | os.PathLike[str] | None" = None) -> dict[str, Any]:
+                    checkpoint: "Checkpoint | str | os.PathLike[str] | None" = None,
+                    dispatch: str | None = None) -> dict[str, Any]:
         """Plan, run the squad in parallel, merge with the lead.
+
+        `dispatch` (local|network|hybrid) overrides AVRONE_SQUAD_DISPATCH for this run (netsquad).
 
         With `checkpoint` (a path or Checkpoint), the plan, every finished worker result and
         the final result are recorded; calling again with the same task and file resumes:
@@ -654,18 +772,32 @@ class TrinityCore:
             if ck is not None:
                 ck.put("subtasks", subtasks)
 
-        plan = self._offload_plan(run_id, len(subtasks))
+        self.squad_roles[run_id] = [{"role": str(s.get("role")), "focus": str(s.get("focus", ""))}
+                                    for s in subtasks if isinstance(s, dict)]
+        lessons = self._lessons_block(run_id, task)
+        if lessons:
+            subtasks_run = [dict(s, focus=s["focus"] + lessons) for s in subtasks]
+        else:
+            subtasks_run = subtasks
+        placed: dict[int, dict[str, Any]] = {}
+        nplan = self._netsquad_plan(run_id, len(subtasks), dispatch)
+        plan = nplan if nplan is not None else self._offload_plan(run_id, len(subtasks))
+        net = nplan is not None
         if plan and plan[1]:
             limit, remote = plan
             gate = asyncio.Semaphore(limit)
+            share = self.fleet.netsquad_share(len(remote), self._netsquad_budget()) if net else 0
 
             async def gated(local: Any) -> str:
                 async with gate:
                     return await local()
             coros = []
-            for i, s in enumerate(subtasks):
+            for i, s in enumerate(subtasks_run):
                 local = (lambda s=s: self.run_agent(run_id, s["role"], task, focus=s["focus"]))
-                if i in remote:
+                if i in remote and net:
+                    fac = (lambda i=i, s=s, node=remote[i], local=local:
+                           self._netsquad(run_id, i, node, s, task, share, gate, local, placed))
+                elif i in remote:
                     fac = (lambda s=s, node=remote[i], local=local: self._offloaded(run_id, node, s, task, gate, local))
                 else:
                     fac = (lambda local=local: gated(local))
@@ -675,21 +807,34 @@ class TrinityCore:
             results = await self._gather_agents(run_id, [
                 self._ck_step(ck, f"worker.{i}",
                               lambda s=s: self.run_agent(run_id, s["role"], task, focus=s["focus"]))
-                for i, s in enumerate(subtasks)], limit=plan[0] if plan else None)
+                for i, s in enumerate(subtasks_run)], limit=plan[0] if plan else None)
+        self.squad_roles.pop(run_id, None)
+        xinfo: dict[str, Any] | None = None
+        rounds = bridgemod.bridge_rounds()
+        if rounds > 0:
+            results, xinfo = await self._cross_examine(run_id, task, subtasks, list(results), rounds)
+
+        def via(i: int) -> str:
+            p = placed.get(i)
+            return f" [node {p['node']} via {'/'.join(p['route'])}]" if p else ""
         reports = "\n\n".join(
-            f"### Agent {i + 1}: {s.get('role')} (focus: {s['focus']})\n{r}"
+            f"### Agent {i + 1}: {s.get('role')} (focus: {s['focus']}){via(i)}\n{r}"
             for i, (s, r) in enumerate(zip(subtasks, results)))
+        lead_in = f"TASK:\n{task}\n\nAGENT REPORTS:\n{reports}"
+        if xinfo is not None and xinfo.get("digest"):
+            lead_in += ("\n\nBRIDGE DIGEST (the agents cross-examined each other; weigh what they "
+                        "concluded together and settle the unresolved points):\n" + xinfo["digest"])
         self.codex.emit(run_id, "lead.merge", "Lead", agents=len(results))
         try:
             answer = await self._chat([
                 {"role": "system", "content": LEAD_PROMPT},
-                {"role": "user", "content": f"TASK:\n{task}\n\nAGENT REPORTS:\n{reports}"},
+                {"role": "user", "content": lead_in},
             ], lead=True, temperature=0.3, session=f"avrone:{run_id}:lead")
             if _weak_lead(answer, reports):
                 self.codex.emit(run_id, "lead.retry", "Lead", reason="narration or too thin")
                 answer = await self._chat([
                     {"role": "system", "content": LEAD_PROMPT},
-                    {"role": "user", "content": f"TASK:\n{task}\n\nAGENT REPORTS:\n{reports}"},
+                    {"role": "user", "content": lead_in},
                     {"role": "assistant", "content": answer},
                     {"role": "user", "content": "That is a plan, not an answer. You cannot run anything. "
                      "Write the complete final answer now from the reports: exact findings, what was "
@@ -700,7 +845,13 @@ class TrinityCore:
             answer = f"Lead failed ({e}). Raw agent reports:\n\n{reports}"
         self.codex.emit(run_id, "run.done", "Trinity", answer=answer)
         out = {"run_id": run_id, "answer": answer,
-               "agents": [{"role": s.get("role"), "focus": s["focus"], "result": r} for s, r in zip(subtasks, results)]}
+               "agents": [{"role": s.get("role"), "focus": s["focus"], "result": r, **placed.get(i, {})}
+                          for i, (s, r) in enumerate(zip(subtasks, results))]}
+        if xinfo is not None:
+            out["bridge"] = {k: v for k, v in xinfo.items() if k != "digest"}
+        learned = self._distill(run_id, task)
+        if learned:
+            out["lessons_learned"] = learned
         if ck is not None and not answer.startswith("Lead failed ("):
             ck.put("result", out)  # a failed merge is retried on resume
         return out
@@ -724,6 +875,13 @@ class TrinityCore:
         ck, run_id, done = self._ck_open(checkpoint, task, "deep", run_id, n=n, first_answer=given)
         if isinstance(done, dict):
             return done
+        if ck is not None and given is None:
+            # The first-wave squad is sized by settings.squad_size; if that changed since the
+            # checkpoint was written, the wave re-runs (its own meta no longer matches) and every
+            # cached review of the OLD first answer is stale too: start the deep scope fresh.
+            w1 = ck.get("wave1.meta")
+            if isinstance(w1, dict) and w1.get("n") != max(1, min(self.settings.squad_size, 8)):
+                ck.clear()
         run_id = run_id or uuid.uuid4().hex[:10]
         if ck is not None:
             ck.begin(task, "deep", run_id, n=n, first_answer=given)
@@ -741,7 +899,8 @@ class TrinityCore:
             self.codex.emit(run_id, "deep.first_wave_done", "Trinity", first_run_id=first_run_id,
                             answer=first_answer[:6000])
 
-        angles = DEEP_ANGLES[:n]
+        lessons = self._lessons_block(run_id, task)
+        angles = [dict(a, focus=a["focus"] + lessons) for a in DEEP_ANGLES[:n]] if lessons else DEEP_ANGLES[:n]
         current = first_answer
         seen: list[str] = []
         history: list[dict[str, Any]] = []
@@ -841,6 +1000,9 @@ class TrinityCore:
         }
         if first_run_id:
             out["first_run_id"] = first_run_id
+        learned = self._distill(run_id, task)
+        if learned:
+            out["lessons_learned"] = learned
         if ck is not None and lead_ok:
             ck.put("result", out)
         return out
@@ -884,6 +1046,95 @@ class TrinityCore:
             self.codex.emit(run_id, "error", "DeepLead", message="empty deep lead reply")
             return f"Deep lead failed (empty reply). Raw reviews:\n\n{reviews}", results, False
         return report, results, True
+
+    # ------------------------------------------------------------ learning bridge
+    def _lessons_block(self, run_id: str, task: str) -> str:
+        """Relevant lessons from earlier runs for worker prompts ('' when off/none). Never raises."""
+        if not bridgemod.lessons_enabled():
+            return ""
+        try:
+            block = bridgemod.lessons_block(self.settings.data_dir, task)
+        except Exception:  # noqa: BLE001
+            return ""
+        if block:
+            self.codex.emit(run_id, "lessons.inject", "Bridge", count=block.count("\n- "), chars=len(block))
+        return block
+
+    def _distill(self, run_id: str, task: str) -> int:
+        """Distill the run bridge's conclusions into the lessons namespace. Never raises."""
+        if not bridgemod.lessons_enabled():
+            return 0
+        try:
+            saved = bridgemod.distill_lessons(self.settings.data_dir, bridgemod.for_core(self, run_id), task)
+        except Exception as e:  # noqa: BLE001 - learning must never sink a finished run
+            self.codex.emit(run_id, "error", "Bridge", message=f"lessons distill failed: {type(e).__name__}: {e}")
+            return 0
+        if saved:
+            self.codex.emit(run_id, "lessons.distill", "Bridge", saved=len(saved))
+        return len(saved)
+
+    async def _cross_examine(self, run_id: str, task: str, subtasks: list[dict[str, str]],
+                             results: list[str], max_rounds: int) -> tuple[list[str], dict[str, Any]]:
+        """Cross-examination: each usable worker gets one short revise turn per round with the
+        others' results and the bridge, and may post corrections/conclusions or revise its result.
+        Stops early when a round adds no correction. Crashed/empty workers are skipped."""
+        b = bridgemod.for_core(self, run_id)
+        labels = [f"Agent{i + 1}:{s.get('role')}" for i, s in enumerate(subtasks)]
+        for i, r in enumerate(results):
+            if not _reviewer_failed(r):
+                try:
+                    b.post(labels[i], "finding", r, role=str(subtasks[i].get("role") or ""))
+                except bridgemod.BridgeError:
+                    pass
+        info: dict[str, Any] = {"rounds_run": 0, "max_rounds": max_rounds, "stop_reason": "cap",
+                                "corrections": 0, "revised": 0}
+        for rnd in range(1, max_rounds + 1):
+            live = [i for i, r in enumerate(results) if not _reviewer_failed(r)]
+            if len(live) < 2:
+                info["stop_reason"] = "too_few_workers"
+                break
+            self.codex.emit(run_id, "bridge.round.start", "Bridge", round=rnd, workers=len(live))
+            board = bridgemod.compact(b.read(limit=60), width=400)
+            snapshot = list(results)
+
+            async def turn(i: int) -> str:
+                others = "\n\n".join(f"### {labels[j]}\n{snapshot[j][:3000]}" for j in live if j != i)
+                return await self._chat([
+                    {"role": "system", "content": bridgemod.REVISE_PROMPT.format(label=labels[i], rnd=rnd)},
+                    {"role": "user", "content": f"TASK:\n{task}\n\nYOUR RESULT:\n{snapshot[i][:4000]}\n\n"
+                     f"OTHER AGENTS' RESULTS:\n{others}\n\nBRIDGE POSTS:\n{board}"},
+                ], temperature=0.3, session=f"avrone:{run_id}:xexam{rnd}:{i}")
+            replies = await asyncio.gather(*(turn(i) for i in live), return_exceptions=True)
+            corrections = 0
+            for i, rep_ in zip(live, replies):
+                if isinstance(rep_, BaseException):
+                    if isinstance(rep_, asyncio.CancelledError):
+                        raise rep_
+                    self.codex.emit(run_id, "error", labels[i], message=f"cross-exam turn failed: {rep_!r}"[:500])
+                    continue
+                posts, revised = bridgemod.parse_revise(rep_)
+                for p in posts:
+                    refs = [r for r in p["refs"] if b.get(r) is not None]
+                    try:
+                        b.post(labels[i], p["kind"], p["text"], refs=refs,
+                               role=str(subtasks[i].get("role") or ""))
+                    except bridgemod.BridgeError:
+                        continue
+                    corrections += p["kind"] == "correction"
+                if revised and not _reviewer_failed(revised):
+                    results[i] = revised
+                    info["revised"] += 1
+            info["rounds_run"] = rnd
+            info["corrections"] += corrections
+            self.codex.emit(run_id, "bridge.round.done", "Bridge", round=rnd, corrections=corrections,
+                            posts=len(b))
+            if corrections == 0:
+                info["stop_reason"] = "converged"
+                break
+        info["posts"] = len(b)
+        info["unresolved"] = len(b.unresolved())
+        info["digest"] = b.digest()
+        return results, info
 
     async def chat(self, task: str, run_id: str | None = None) -> dict[str, Any]:
         run_id = run_id or uuid.uuid4().hex[:10]

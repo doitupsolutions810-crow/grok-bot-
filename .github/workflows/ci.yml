@@ -6,7 +6,7 @@ on:
 jobs:
   live:
     runs-on: ubuntu-24.04    # pinned: ubuntu-latest migrated to Ubuntu 26 on 2026-10-19 (actions/runner-images#14748)
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       LLM_MODEL: qwen2.5:3b
       MODELS_REQUIRED: qwen2.5:3b,nomic-embed-text
@@ -24,12 +24,27 @@ jobs:
 
       - name: Wait for boot self-test (real image+model pulls, MCP handshake)
         run: |
-          for i in $(seq 1 60); do
-            if curl -fsS http://localhost:3000/api/status -o status.json; then break; fi
-            sleep 10
+          # server.js binds :3000 only after the full boot chain (daemon, ollama,
+          # real model pulls, MCP handshake, self-test) completes. A first boot on
+          # a fresh runner pulls ~2GB of models, which can outlast a short wait —
+          # size the window to real pulls, and surface the boot logs as run
+          # annotations if the port still never answers.
+          ok=0
+          for i in $(seq 1 100); do
+            if curl -fsS http://localhost:3000/api/status -o status.json; then ok=1; break; fi
+            sleep 15
           done
-          cat status.json
-          grep -q '"ready":true' status.json
+          if [ "$ok" = 1 ]; then
+            cat status.json
+            grep -q '"ready":true' status.json
+          else
+            echo "server never answered within the 25-minute window; last boot logs:"
+            docker compose logs --tail 30 grok-bot 2>&1 | tail -n 10 | while IFS= read -r l; do
+              l="${l//%/%25}"
+              echo "::error::${l:0:220}"
+            done
+            exit 1
+          fi
 
       - name: Live agent tests (real inference, docker exec, browser)
         run: docker compose exec -T grok-bot node tests/live.test.js

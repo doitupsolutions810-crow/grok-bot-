@@ -53,12 +53,6 @@
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/data"]
-    },
-    "git": {
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-git", "/app/data"]
     }
   }
 }
-

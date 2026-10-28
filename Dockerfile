@@ -13,7 +13,7 @@ RUN npm install --omit=dev
 # depends on the npm registry at runtime (npx resolves global installs
 # offline). The Dockerfile is the right place for network-dependent work:
 # a failed build is a visible, retryable error — not a dead boot.
-RUN npm install -g @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-git
+RUN npm install -g @modelcontextprotocol/server-filesystem
 COPY . .
 
 ENV NODE_ENV=production PORT=3000

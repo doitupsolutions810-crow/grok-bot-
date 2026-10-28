@@ -18,8 +18,9 @@ function dockerOpts() {
 export async function bootDocker({ log = console.log } = {}) {
   const docker = new Docker(dockerOpts());
 
-  // 1. Verify the daemon is reachable
-  const info = await docker.info();
+  // 1. Verify the daemon is reachable — a cold socket-proxy gets a grace
+  //    window instead of a one-shot connection error that kills the boot.
+  const info = await connectDaemon(docker, log);
   log(`[boot] Docker connected: ${info.Name}, ${info.Containers} containers, v${info.ServerVersion}`);
 
   // 2. Ensure the LLM backend is up and the model exists
@@ -32,6 +33,19 @@ export async function bootDocker({ log = console.log } = {}) {
   await ensurePlugins(docker, log);
 
   return docker;
+}
+
+async function connectDaemon(docker, log, { timeout = 60_000 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    try {
+      return await docker.info();
+    } catch (e) {
+      if (Date.now() > deadline) throw new Error(`Docker daemon unreachable after ${timeout / 1000} s: ${e.message}`);
+      log(`[boot] daemon not ready yet (${e.message}) — retrying in 2 s...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
 }
 
 // Pull an image only when it is not already present locally — a flaky registry

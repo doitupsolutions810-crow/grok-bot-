@@ -28,10 +28,20 @@ export async function preinstall(docker, { log = console.log } = {}) {
     await pullModel(ollama, model, log);
   }
 
-  // 3. Wait for every sidecar to be genuinely reachable
+  // 3. Wait for every sidecar to be genuinely reachable — the shared browser
+  //    needs its Chromium up before the browser self-test runs, or the boot
+  //    would race a cold container.
   await waitForHttp(`${ollama}/api/tags`, log, "ollama");
+  await waitForHttp(browserProbe(), log, "browser");
   await waitForHttp(process.env.COMFYUI_URL || "http://comfyui:8188", log, "comfyui", { optional: true });
   return true;
+}
+
+// The CDP server answers plain HTTP GET /json/version on the same port as
+// the websocket (BROWSER_WS), which makes it a perfect readiness probe.
+function browserProbe() {
+  const ws = process.env.BROWSER_WS || "ws://browser:3000";
+  return `${ws.replace(/^ws/, "http").replace(/\/+$/, "")}/json/version`;
 }
 
 function pullImage(docker, image, log) {

@@ -26,6 +26,8 @@ docker compose --profile full up -d --build
 
 Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
 
+To prove the whole stack in one command — the CI-equivalent boot proof, no GitHub needed: `./verify.sh` (verdict in `data/VERIFY.md`, exit 0 = SYSTEM GREEN).
+
 ## What's inside
 
 | Subsystem | What it really does |

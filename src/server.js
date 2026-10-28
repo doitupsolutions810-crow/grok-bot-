@@ -17,6 +17,7 @@ import { visionTool } from "./tools/vision.js";
 import { taskBoardTool } from "./agents/taskboard.js";
 import { teamAskTool } from "./agents/team.js";
 import { spawnTool } from "./tools/spawn.js";
+import { avroneTool } from "./tools/avrone.js";
 import { skillTools, playbookTools } from "./tools/skills.js";
 import { startXTrigger } from "./tools/xtrigger.js";
 import { traceTools } from "./observability/traces.js";
@@ -37,6 +38,7 @@ async function main() {
     taskBoardTool(),                       // run-scoped task board (Avrone)
     teamAskTool(() => tools),              // delegate to a named teammate
     spawnTool(() => tools),                // depth-limited subagent spawn
+    avroneTool,                            // the concluding system bridge: delegate to AVRONE's squad                // depth-limited subagent spawn
     ...skillTools(),                       // recorded browser skills → tools
     ...playbookTools()                     // skill.list / skill.load (SKILL.md playbooks)
   ];

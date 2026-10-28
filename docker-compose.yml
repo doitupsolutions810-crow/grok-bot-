@@ -1,4 +1,3 @@
-successfully downloaded text file (SHA: cda8a43bb82a2f3e9aa76908ade4cbfc9be4941c)
 services:
   socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -42,6 +41,9 @@ services:
       GROK_DEEP_ROUNDS: ${GROK_DEEP_ROUNDS:-3}
       GROK_MAX_SPAWN_DEPTH: ${GROK_MAX_SPAWN_DEPTH:-2}
       SKILLS_DIR: /app/skills
+      WHISPER_URL: ${WHISPER_URL:-}             # full profile: http://whisper:9000 (HTTP STT sidecar)
+      PIPER_CMD: ${PIPER_CMD:-}                 # TTS binary override (default: piper)
+      AVRONE_URL: ${AVRONE_URL:-}               # the concluding system bridge -> AVRONE
     volumes:
       - ./config:/app/config
       - ./data:/app/data
@@ -91,4 +93,3 @@ volumes:
   comfyui_models:
   browser_profile:                  # shared persistent browser computer
   grok_workspace:                   # shared sandbox filesystem for all agents
-

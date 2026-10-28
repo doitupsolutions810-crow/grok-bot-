@@ -1,4 +1,3 @@
-successfully downloaded text file (SHA: 84073fcf72602fa1febd09ad84436b8ceb251f28)
 # Grok Bot ⚡
 
 A self-hosted agent platform with full **Grok Bot parity**: Docker-connected on boot,
@@ -118,9 +117,33 @@ governor snapshot, and ledger integrity.
 docker compose exec grok-bot node tests/live.test.js
 ```
 
+## The system bridge (AVRONE ↔ Grok Bot)
+
+The two halves of the system conclude into one:
+
+- **Grok Bot → AVRONE:** the `avrone.squad` tool lets any Grok Bot agent delegate a whole task to AVRONE's own squad (plan → parallel workers with real tools → lead merge; `mode: "deep"` adds adversarial review waves). Set `AVRONE_URL` (e.g. `http://host.docker.internal:8710`) and it's live; AVRONE answers through its plain `/api/chat`.
+- **AVRONE → Grok Bot:** AVRONE agents already ship the `http_request` tool, so they call Grok Bot's API directly — e.g. `http_request POST http://localhost:3000/api/chat {"message": "...", "mode": "squad"}` — reaching this terminal, browser, team and ledger.
+- **MCP, both ways:** `avrone-mcp` exposes AVRONE to any MCP client (`avrone_squad`, `avrone_chat`, `avrone_deep`, `avrone_tools`); Grok Bot handshakes MCP servers at boot from `config/agents.json`.
+
+## The agents' evolution loop
+
+The agents evolve through their own runs — the same sequential process that built the system:
+
+1. **Observe** — every run lands in the Eternal CodeX JSONL; user feedback (`POST /api/feedback`) is injected into future context.
+2. **Conclude** — `scripts/evolve.js` scans the run logs (corrupt lines skipped), counts tool use and errors, lists recorded skills, and writes `data/EVOLVE.md` with proposed next evolutions: `docker compose exec grok-bot node scripts/evolve.js` (CI runs it right after the live tests).
+3. **Evolve** — recorded skills become replayable tools; AVRONE's test-gated self-evolution (`AVRONE_SELF_EVOLVE=allow` in its `deploy/full.env`) proposes code edits that land only if the full test suite passes.
+4. **Re-benchmark** — `tools/model_bench.py` re-validates the model default after any model or stack change, so the system never silently degrades.
+
+## Launch locally (the sequential process)
+
+`./launch.sh` runs the same sequence used to build the system, in order:
+preflight → models → AVRONE (offline suite, doctor, launch) → Grok Bot (full
+profile, boot self-tests) → live tests → the evolution report. Both consoles
+end up live: AVRONE on `:8710`, Grok Bot on `:3000`, with `EVOLVE.md` in
+`./data`.
+
 ## Credit
 
 The orchestration core is a port of [Avrone](https://github.com/doitupsolutions810-crow/Avrone)
 (Python) into this Node.js runtime — trinity.py → `src/agents/trinity.js`,
 governor.py → `src/agents/governor.js`, codex.py → `src/agents/codex.js`.
-

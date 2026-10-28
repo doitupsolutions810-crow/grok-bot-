@@ -1,4 +1,3 @@
-successfully downloaded text file (SHA: c0f6292de2ed6b6e16b38d75618880b537691c11)
 name: live-tests
 on:
   push: { branches: [main] }
@@ -35,7 +34,9 @@ jobs:
       - name: Live agent tests (real inference, docker exec, browser)
         run: docker compose exec -T grok-bot node tests/live.test.js
 
+      - name: Agents' evolution loop (writes EVOLVE.md from the live runs)
+        run: docker compose exec -T grok-bot node scripts/evolve.js
+
       - name: Boot + agent logs on failure
         if: failure()
         run: docker compose logs --tail 300
-

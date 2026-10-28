@@ -1,4 +1,3 @@
-successfully downloaded text file (SHA: de3e4b321471d7670fb3bd26e513a75e2c574ae4)
 FROM node:24-slim
 
 # docker.io  → terminal tool shells out to `docker exec`
@@ -10,6 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
+# MCP servers pre-installed at BUILD time so the boot handshake never
+# depends on the npm registry at runtime (npx resolves global installs
+# offline). The Dockerfile is the right place for network-dependent work:
+# a failed build is a visible, retryable error — not a dead boot.
+RUN npm install -g @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-git
 COPY . .
 
 ENV NODE_ENV=production PORT=3000

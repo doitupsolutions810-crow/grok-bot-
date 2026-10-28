@@ -6,7 +6,9 @@ function dockerOpts() {
   const h = process.env.DOCKER_HOST;
   if (h && h.startsWith("tcp://")) {
     const u = new URL(h);
-    return { protocol: "tcp", host: u.hostname, port: Number(u.port || 2375) };
+    // Docker Engine exposes its API over HTTP even when DOCKER_HOST uses the tcp:// scheme.
+    // dockerode expects "http" here; "tcp" is not a valid URL protocol for its request layer.
+    return { protocol: "http", host: u.hostname, port: Number(u.port || 2375) };
   }
   if (h && h.startsWith("http")) {
     const u = new URL(h);

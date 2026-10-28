@@ -55,15 +55,44 @@ Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger
 
 Everything is env-driven (see `.env.example`). Key knobs:
 
-- `MODELS_REQUIRED` — models pulled on boot AND valid teammate models (CI uses `llama3.2:1b,nomic-embed-text`)
+- `MODELS_REQUIRED` — models pulled on boot AND valid teammate models (CI uses `qwen2.5:3b,nomic-embed-text`)
 - `GROK_MAX_PARALLEL` / `GROK_MIN_PARALLEL` / `GROK_WANT_PARALLEL` / `GROK_THERMAL_MAX_C` — Governor
 - `GROK_SQUAD_N` / `GROK_SQUAD_STEPS` / `GROK_DEEP_ROUNDS` / `GROK_MAX_SPAWN_DEPTH` — Trinity
 - `BOOT_STRICT=false` to boot degraded instead of failing
 
+## Models: the free open-source route
+
+Default model: **`qwen2.5:3b`** — chosen by a live, no-mock benchmark (`tools/model_bench.py`),
+not by guesswork. The bench scores each model on exactly what the Avrone
+orchestration needs, on a real Ollama server with the `shell` tool really executing:
+
+| Stage | Points | What it proves |
+| --- | --- | --- |
+| JSON actions | 30 | a valid tool/final action every turn (Avrone worker protocol) |
+| Tool use | 25 | really calls the tool instead of guessing (15) + correct computed value (10) |
+| Squad | 35 | planner JSON (10) + both workers finish (10) + Lead merge non-weak (15) |
+| Deep wave | 10 | recursive review: 2 reviewers + Deep Lead report with all sections |
+
+Results (2 vCPU, no GPU — your host will be faster): **qwen2.5:3b scored 100/100**
+(every turn valid, correct tool calls, full squad with merged answer). The bench
+survives server drops mid-run (health-wait + retries), scores models in
+isolation, and writes partial results incrementally.
+
+Run it yourself (also runs in CI via the `model-bench` workflow, weekly or on
+demand from the Actions tab):
+
+```bash
+python3 tools/model_bench.py --base http://127.0.0.1:11434 --protocol native
+```
+
+On a GPU host, upgrade in one env line (`LLM_MODEL=qwen3.5:9b`): the Qwen family
+leads open-weight tool-calling benchmarks (BFCL v4 / TAU2-bench), so bigger Qwen
+models only get better at orchestration.
+
 ## Live tests
 
 CI (GitHub Actions, real Docker runner) brings up the whole stack with
-`llama3.2:1b` and runs `tests/live.test.js` against real inference, docker exec,
+`qwen2.5:3b` and runs `tests/live.test.js` against real inference, docker exec,
 and the browser — 8 live tests including a squad end-to-end run, CodeX replay,
 governor snapshot, and ledger integrity.
 
@@ -76,3 +105,4 @@ docker compose exec grok-bot node tests/live.test.js
 The orchestration core is a port of [Avrone](https://github.com/doitupsolutions810-crow/Avrone)
 (Python) into this Node.js runtime — trinity.py → `src/agents/trinity.js`,
 governor.py → `src/agents/governor.js`, codex.py → `src/agents/codex.js`.
+

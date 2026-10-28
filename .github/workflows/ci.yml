@@ -6,10 +6,10 @@ on:
 jobs:
   live:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
-      LLM_MODEL: llama3.2:1b
-      MODELS_REQUIRED: llama3.2:1b,nomic-embed-text
+      LLM_MODEL: qwen2.5:3b
+      MODELS_REQUIRED: qwen2.5:3b,nomic-embed-text
       BOOT_STRICT: "true"
     steps:
       - uses: actions/checkout@v4
@@ -32,3 +32,4 @@ jobs:
       - name: Boot + agent logs on failure
         if: failure()
         run: docker compose logs --tail 300
+

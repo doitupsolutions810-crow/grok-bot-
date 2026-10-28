@@ -24,8 +24,8 @@ services:
       DOCKER_HOST: tcp://socket-proxy:2375      # no raw socket mount anymore
       LLM_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
-      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b}
-      MODELS_REQUIRED: ${MODELS_REQUIRED:-llama3.1:8b,nomic-embed-text}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
+      MODELS_REQUIRED: ${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text}
       BROWSER_WS: ws://browser:3000
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
       BOOT_STRICT: ${BOOT_STRICT:-true}
@@ -90,3 +90,4 @@ volumes:
   comfyui_models:
   browser_profile:                  # shared persistent browser computer
   grok_workspace:                   # shared sandbox filesystem for all agents
+

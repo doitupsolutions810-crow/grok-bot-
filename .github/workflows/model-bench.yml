@@ -1,0 +1,61 @@
+name: model-bench
+
+# Live, no-mock model benchmark: installs Ollama on the runner, pulls the
+# candidate models, and scores each one on what the orchestration actually
+# needs (JSON actions, real tool calls, full squad, deep review wave).
+# Runs weekly, or on demand from the Actions tab (optional `models` input,
+# e.g. "qwen3.5:9b,qwen2.5:3b").
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Comma-separated Ollama model tags (empty = default candidates)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 4 * * 1"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (sudo systemctl start ollama 2>/dev/null || nohup ollama serve > /tmp/ollama.log 2>&1 &)
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:11434/api/tags >/dev/null && break
+            sleep 5
+          done
+          curl -sf http://127.0.0.1:11434/api/tags >/dev/null || { cat /tmp/ollama.log; exit 1; }
+
+      - name: Run live model bench
+        env:
+          BENCH_MODELS: ${{ github.event.inputs.models }}
+        run: |
+          python3 tools/model_bench.py \
+            --base http://127.0.0.1:11434 \
+            --protocol native \
+            --out bench_results.json \
+            ${BENCH_MODELS:+--models "$BENCH_MODELS"}
+
+      - name: Results into the job summary
+        if: always()
+        run: |
+          {
+            echo '```json'
+            cat bench_results.json 2>/dev/null || echo '{}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench_results.json
+          if-no-files-found: ignore

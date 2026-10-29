@@ -5,7 +5,7 @@ export function safeToolTraceText(value, cap = 1200) {
     // Redact sensitive values in dotenv, YAML-like, JSON, and URL-query output.
     // Match sensitive key names even with prefixes/suffixes such as AWS_SECRET_ACCESS_KEY.
     .replace(
-      /(["']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|secret|authorization|cookie|private[_ -]?key|credential|client[_-]?secret|session[_-]?key)[A-Za-z0-9_.-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^"'\s,;&}]+)/gi,
+      /(["']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|secret|authorization|cookie|private[_ -]?key|credential|client[_-]?secret|session[_-]?key)[A-Za-z0-9_.-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^"'\s,;&}]+)/gi,
       '$1"[REDACTED]"'
     )
     .slice(0, cap);

@@ -6,6 +6,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const FILE = () => process.env.AGENTS_FILE || "/app/config/agents.json";
 
+// MCP args may reference ${GROK_MCP_DATA_DIR}; the default (/app/data) keeps the
+// container layout unchanged, native mode points it at a host directory.
+function expandMcp(servers) {
+  const dir = process.env.GROK_MCP_DATA_DIR || "/app/data";
+  const sub = v => typeof v === "string" ? v.replaceAll("${GROK_MCP_DATA_DIR}", dir) : v;
+  return Object.fromEntries(Object.entries(servers).map(([id, c]) =>
+    [id, { ...c, args: (c.args || []).map(sub) }]));
+}
+
 let cache = null;
 export function reload() { cache = null; }
 
@@ -16,7 +25,7 @@ export function loadAgents() {
     defaultModel: cfg.defaultModel || "",
     agents: Object.fromEntries((cfg.agents || []).map(a => [a.id, a])),
     bots: cfg.bots || [],
-    mcpServers: cfg.mcpServers || {}
+    mcpServers: expandMcp(cfg.mcpServers || {})
   };
   return cache;
 }

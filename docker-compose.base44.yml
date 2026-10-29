@@ -1,0 +1,138 @@
+# Base44 sandbox stack: runs Grok Bot from the cloned source in native mode
+# (GROK_NATIVE=true) so no Docker socket is needed inside the sandbox.
+#
+#   docker compose -f docker-compose.base44.yml up -d --build
+#
+# web: http://localhost:3000   (host port 3000 is the preview entry point)
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: on-failure
+    labels:
+      - base44.project=Ollama
+      - base44.kind=infra
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  # One-shot: pull the models the boot self-tests need, then exit.
+  models:
+    image: ollama/ollama:latest
+    restart: "no"
+    labels:
+      - base44.project=Ollama models
+      - base44.kind=infra
+    depends_on:
+      ollama:
+        condition: service_healthy
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        for m in $$(printf '%s' "$${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text}" | tr ',' ' '); do
+          echo "[models] pulling $$m"
+          ollama pull "$$m"
+        done
+
+  # AVRONE: the Python half of the system (plan → squad → lead merge, CodeX logs).
+  # Runs on the local runner — no Docker socket — and shares the same Ollama.
+  # Internal only (no host port): Grok Bot reaches it at http://avrone:8710.
+  avrone:
+    image: python:3.12-slim
+    restart: on-failure
+    working_dir: /app
+    labels:
+      - base44.project=AVRONE
+      - base44.kind=api
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    environment:
+      - AVRONE_PROVIDER=ollama
+      - AVRONE_LLM_BASE_URL=http://ollama:11434/v1
+      - AVRONE_LLM_MODEL=qwen2.5:3b
+      - AVRONE_LLM_FALLBACKS=
+      - AVRONE_RUNNER=local
+      - AVRONE_HOST=0.0.0.0
+      - AVRONE_PORT=8710
+      - AVRONE_DATA_DIR=/app/data/avrone
+      - AVRONE_WORKSPACE=/app/data/avrone-workspace
+      - AVRONE_PLUGINS_DIR=/app/plugins
+      - AVRONE_SKILLS_DIR=/app/skills
+      - AVRONE_ENV_FILE=/app/.env.avrone-does-not-exist
+      - AVRONE_ADMIN_TOKEN=
+    volumes:
+      - ./:/app
+      - avrone-data:/app/data
+    depends_on:
+      models:
+        condition: service_completed_successfully
+    command:
+      - /bin/sh
+      - -ec
+      - pip install --no-cache-dir -e . && exec python -m avrone.server
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8710/api/status', timeout=5).status==200 else 1)"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  grok-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    restart: on-failure
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    labels:
+      - base44.project=Grok Bot
+      - base44.kind=web
+      - base44.port=3000
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    environment:
+      - HOST=0.0.0.0
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    volumes:
+      - ./:/app
+      - grok-data:/app/data
+      - grok-output:/output
+    depends_on:
+      models:
+        condition: service_completed_successfully
+      avrone:
+        condition: service_healthy
+    # Dependencies come from the mounted checkout's lockfile, then the app
+    # starts under node --watch so source edits reload the server.
+    command:
+      - /bin/sh
+      - -ec
+      - npm ci --no-audit --no-fund && exec npm run dev
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 420s
+
+volumes:
+  ollama-models:
+  grok-data:
+  grok-output:
+  avrone-data:

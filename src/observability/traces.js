@@ -7,8 +7,9 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { chatRoute } from "../llm/router.js";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/traces.db");
+const db = new Database(dataFile("traces.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS tool_calls (
   id INTEGER PRIMARY KEY, ts TEXT, agent TEXT, tool TEXT, args TEXT,
   duration_ms INTEGER, ok INTEGER, error TEXT, prev_hash TEXT, hash TEXT
@@ -50,7 +51,9 @@ export function traceTools(tools, agent = "system") {
 }
 
 export function ledger() {
-  const rows = db.prepare("SELECT id seq, ts, agent, tool, duration_ms, ok, hash, prev_hash, args FROM tool_calls ORDER BY id").all();
+  // `error` must be selected too: it is part of the hashed body, so leaving it out
+  // made every entry's recomputed hash differ and the ledger always read TAMPERED.
+  const rows = db.prepare("SELECT id seq, ts, agent, tool, duration_ms, ok, error, hash, prev_hash, args FROM tool_calls ORDER BY id").all();
   let intact = true;
   rows.forEach(r => {
     const body = JSON.stringify({ agent: r.agent, tool: r.tool, args: r.args, ms: r.duration_ms, ok: r.ok, error: r.error, prev: r.prev_hash });

@@ -5,8 +5,9 @@
 import Database from "better-sqlite3";
 import { runAgent } from "./runtime.js";
 import { listBots, upsertBot, findAgent } from "./registry.js";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/bots.db");
+const db = new Database(dataFile("bots.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS mailbox (
   id INTEGER PRIMARY KEY, ts TEXT, from_bot TEXT, to_bot TEXT, content TEXT, done INTEGER DEFAULT 0
 )`);

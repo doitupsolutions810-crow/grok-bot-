@@ -21,15 +21,18 @@ import { avroneTool } from "./tools/avrone.js";
 import { skillTools, playbookTools } from "./tools/skills.js";
 import { startXTrigger } from "./tools/xtrigger.js";
 import { traceTools } from "./observability/traces.js";
+import { isNative, bootNative } from "./native/index.js";
+import { basicGate } from "./middleware/auth.js";
 
 const PORT = process.env.PORT || 3000;
 
 async function main() {
   // 1. Connect to the host's Docker installation (real socket / socket-proxy)
-  const docker = await bootDocker();
+  const native = isNative();
+  const docker = native ? await bootNative() : await bootDocker();
 
   // 2. Pre-install: pull images, pull LLM/embedding models, start sidecars
-  await preinstall(docker);
+  await preinstall(docker, { native });
 
   // 3. Live tools — every one of these is a real, running capability
   const baseTools = [
@@ -69,6 +72,7 @@ async function main() {
 
   // 8. Serve
   const app = express();
+  app.use(basicGate);                       // opt-in: GROK_AUTH_PASSWORD protects console + API
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", makeRouter({ tools, docker }));
   app.get("/api/status", (req, res) => res.json({
@@ -76,7 +80,9 @@ async function main() {
   }));
   app.use(express.static("public"));       // web console (public/index.html)
 
-  app.listen(PORT, () => console.log(`[boot] Grok Bot fully live on :${PORT}`));
+  const HOST = process.env.HOST || (process.env.GROK_AUTH_PASSWORD || isNative() ? "127.0.0.1" : "0.0.0.0");
+  if (!process.env.GROK_AUTH_PASSWORD && HOST !== "127.0.0.1") console.warn("[boot] WARNING: no GROK_AUTH_PASSWORD set and listening on all interfaces");
+  app.listen(PORT, HOST, () => console.log(`[boot] Grok Bot fully live on :${PORT}`));
 }
 
 main().catch(err => { console.error("[boot] fatal:", err); process.exit(1); });

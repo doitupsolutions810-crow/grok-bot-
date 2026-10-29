@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import { LLM } from "../llm/provider.js";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/memory.db");
+const db = new Database(dataFile("memory.db"));
 const llm = new LLM();
 
 db.exec(`
@@ -13,7 +14,15 @@ db.exec(`
   );
 `);
 
+// A held (Auto Review) call returns { pendingApproval: id } rather than text; store it readably.
+export function asText(v) {
+  if (typeof v === "string") return v;
+  if (v && v.pendingApproval != null) return `[waiting for your approval: #${v.pendingApproval}]`;
+  return JSON.stringify(v ?? "");
+}
+
 export async function remember(session, role, content) {
+  content = asText(content);
   db.prepare("INSERT INTO messages (session, role, content, ts) VALUES (?,?,?,datetime('now'))")
     .run(session, role, content);
   // Rolling summary: compact old context each turn (Grok-style "remembers past chats")

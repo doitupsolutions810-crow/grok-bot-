@@ -34,6 +34,32 @@ Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger
 
 To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
 
+## Native mode (no Docker)
+
+For hosts without Docker, set `GROK_NATIVE=true`. The Docker path stays the default and is unchanged.
+Native mode swaps the Docker-bound pieces for local equivalents: the terminal runs via `sh -lc` in
+`GROK_NATIVE_WORKSPACE/agents/<id>`, the browser is a local persistent Chromium (`npx playwright install chromium`),
+and boot only needs Ollama plus the models. **The terminal is not container-isolated in this mode.**
+
+```bash
+npm install && npm i -g @modelcontextprotocol/server-filesystem
+ollama pull qwen2.5:3b && ollama pull nomic-embed-text
+# AVRONE (optional bridge): cd ../Avrone && pip install -e ".[dev]" && avrone   # :8710
+cat > .env.native <<EOF
+GROK_NATIVE=true
+OLLAMA_URL=http://127.0.0.1:11434
+LLM_MODEL=qwen2.5:3b
+DATA_DIR=$PWD/data
+OUTPUT_DIR=$PWD/data/images
+GROK_MCP_DATA_DIR=$PWD/data
+AVRONE_URL=http://127.0.0.1:8710
+EOF
+set -a; . ./.env.native; set +a; node src/server.js     # http://localhost:3000
+```
+
+All on-disk locations come from `src/paths.js` (`DATA_DIR`, `OUTPUT_DIR`; defaults `/app/data`, `/output`).
+Model names without a tag now match Ollama's `:latest` listing. On CPU-only hosts squad/deep runs take minutes.
+
 ## What's inside
 
 | Subsystem | What it really does |

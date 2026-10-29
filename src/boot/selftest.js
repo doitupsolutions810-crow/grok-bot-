@@ -1,4 +1,5 @@
 import { LLM } from "../llm/provider.js";
+import { isNative } from "../native/index.js";
 
 export async function selftest({ tools, docker, log = console.log }) {
   const results = [];
@@ -14,7 +15,7 @@ export async function selftest({ tools, docker, log = console.log }) {
     return `model ${llm.model} answered correctly`;
   });
 
-  await check("Terminal: real docker exec in sandbox", async () => {
+  await check(isNative() ? "Terminal: real local exec (native)" : "Terminal: real docker exec in sandbox", async () => {
     const t = tools.find(t => t.name === "terminal");
     const r = await t.run({ command: "echo grok-sandbox-ok && uname -s" });
     if (!r.ok || !r.stdout.includes("grok-sandbox-ok")) throw new Error(JSON.stringify(r));
@@ -40,7 +41,10 @@ export async function selftest({ tools, docker, log = console.log }) {
     return "embedding + cosine search responded";
   });
 
-  await check("Docker: daemon control verified", async () => {
+  if (isNative()) {
+    results.push({ name: "Docker: skipped (GROK_NATIVE)", ok: true, detail: "native mode, no Docker daemon" });
+    log("[boot] SKIP Docker daemon check (GROK_NATIVE=true)");
+  } else await check("Docker: daemon control verified", async () => {
     const list = await docker.listContainers();
     if (!list.length) throw new Error("no containers visible");
     return `${list.length} containers visible`;

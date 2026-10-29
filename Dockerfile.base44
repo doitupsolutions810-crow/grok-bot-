@@ -1,0 +1,22 @@
+# Base44 sandbox image: a plain Node runtime plus the system tools the app
+# expects. No application source is baked in — the repo is bind-mounted at
+# runtime so edits are live.
+FROM node:22-bookworm
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    npm_config_fund=false \
+    npm_config_audit=false
+
+# Terminal tool + boot helpers (git/curl), process inspection for the governor.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git procps ripgrep unzip python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Browser tool (native mode uses a local Chromium) and the filesystem MCP
+# server that config/agents.json handshakes at boot. Versions match the
+# project's package-lock (playwright 1.64.1).
+RUN npm install -g playwright@1.64.1 @modelcontextprotocol/server-filesystem \
+    && playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app

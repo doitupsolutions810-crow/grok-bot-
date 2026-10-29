@@ -117,6 +117,19 @@ test("text length and voice name are validated before a connection is opened", a
   );
 });
 
+test("Wyoming rejects an oversized info header even when delivered with its newline", async () => {
+  await withFakePiper(socket => {
+    socket.end(frame("audio-stop"));
+  }, async url => {
+    await assert.rejects(
+      synthesizeWyoming("Hello", "en_US-lessac-medium", { url, timeoutMs: 1000 }),
+      /oversized event header/
+    );
+  }, {
+    infoData: { voice_catalog: "x".repeat(1024 * 1024 + 1024) }
+  });
+});
+
 test("invalid Wyoming audio metadata is rejected", async () => {
   await withFakePiper(socket => {
     socket.end(Buffer.concat([

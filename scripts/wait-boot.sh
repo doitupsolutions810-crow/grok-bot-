@@ -3,7 +3,7 @@
 # Usage: scripts/wait-boot.sh [timeout-seconds]
 set -u
 
-TIMEOUT_SECONDS="${1:-${VERIFY_BOOT_TIMEOUT_SECONDS:-3600}}"
+TIMEOUT_SECONDS="${1:-${VERIFY_BOOT_TIMEOUT_SECONDS:-7200}}"
 POLL_SECONDS="${VERIFY_BOOT_POLL_SECONDS:-10}"
 case "$TIMEOUT_SECONDS" in ''|*[!0-9]*) TIMEOUT_SECONDS=3600 ;; esac
 case "$POLL_SECONDS" in ''|*[!0-9]*) POLL_SECONDS=10 ;; esac

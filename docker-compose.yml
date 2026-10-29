@@ -20,7 +20,9 @@ services:
     build: .
     container_name: grok-bot
     restart: unless-stopped
-    ports: ["3000:3000"]
+    # Local-only by default: the console exposes terminal and agent tools.
+    # Put it behind an authenticated reverse proxy before exposing it remotely.
+    ports: ["127.0.0.1:3000:3000"]
     # Lets the in-container AVRONE bridge reach a host-launched AVRONE on Linux too.
     extra_hosts:
       - "host.docker.internal:host-gateway"

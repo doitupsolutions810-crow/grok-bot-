@@ -48,6 +48,9 @@ services:
     environment:
       AVRONE_URL: http://avrone:8710
       GROK_SANDBOX_NETWORK: grok-integration
+      GROK_SQUAD_N: "2"
+      GROK_MAX_PARALLEL: "2"
+      GROK_MIN_PARALLEL: "2"
       GROK_SANDBOX_CONTAINER: grok-sandbox-integration
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox-integration
     depends_on:

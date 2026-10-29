@@ -7,6 +7,7 @@
 import { chatRoute } from "../llm/router.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
 import { emit } from "./codex.js";
+import { safeToolTraceText, summarizeToolResult } from "./tool-trace.js";
 import { summarizeToolResult } from "./tool-trace.js";
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;

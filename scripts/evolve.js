@@ -7,7 +7,7 @@
 // recorded skills, and writes /app/data/EVOLVE.md with the next proposed
 // evolutions. CI runs it after the live tests; run it yourself with:
 //   docker compose exec grok-bot node scripts/evolve.js
-import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const DATA = process.env.DATA_DIR || "/app/data";
@@ -56,7 +56,13 @@ function listSkills() {
 
 const top = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
 
-function propose(stats, skills) {
+function latestObservation() {
+  const file = join(DATA, "observations", "latest.json");
+  try { return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null; }
+  catch { return null; }
+}
+
+function propose(stats, skills, observation) {
   const p = [];
   if (stats.errors > 0) {
     p.push(`- ${stats.errors} error events recorded — replay the failing flows and fix the top erroring tool first.`);
@@ -67,13 +73,42 @@ function propose(stats, skills) {
   if (!skills.length) {
     p.push("- No skills recorded yet — record one browser workflow so teammates can replay it.");
   }
+  if (!observation) {
+    p.push("- No persisted S-mode observation exists yet — run scripts/squad-observe.js and review its evidence report.");
+  } else {
+    for (const gap of (observation.failures || []).slice(0, 5)) {
+      p.push(`- Runtime observation gap: ${String(gap).slice(0, 240)} — fix it and rerun the observation gate.`);
+    }
+    if (!observation.grokToAvrone?.ok) {
+      p.push("- Grok Bot → AVRONE bridge is not evidenced green — diagnose the avrone.squad receipt before release.");
+    }
+    if (!observation.avroneToGrok?.ok) {
+      p.push("- AVRONE → Grok Bot bridge is not evidenced green — inspect grokbot.bridge CodeX receipts and tool routing.");
+    }
+    if (!(observation.grokSquad?.overlappingPairs > 0)) {
+      p.push("- Two-worker overlap is not evidenced — inspect SQUAD_N, governor target, and worker start/finish traces.");
+    }
+    if (!(observation.failures || []).length) {
+      p.push("- Latest S-mode and bridge checks report no gaps; rerun after every runtime/configuration change to prevent stale evidence.");
+    }
+  }
   p.push("- Re-run the model bench (tools/model_bench.py) after any model or stack change; keep the measured winner as the default.");
   return p;
 }
 
 const stats = scanRuns();
 const skills = listSkills();
+const observation = latestObservation();
 const toolLines = top(stats.toolCalls, 8);
+const observationLines = observation ? [
+  `- Observation created: ${observation.createdAt || "unknown"}`,
+  `- Grok Bot ready: ${observation.grokBot?.summary?.ready ?? "unknown"}`,
+  `- AVRONE reachable: ${observation.avrone?.ok === true}`,
+  `- S-mode workers/findings: ${observation.grokSquad?.spawned ?? 0}/${observation.grokSquad?.successfulFindings ?? 0}`,
+  `- Worker overlap pairs: ${observation.grokSquad?.overlappingPairs ?? 0}`,
+  `- Forward bridge: ${observation.grokToAvrone?.ok === true}; reverse bridge: ${observation.avroneToGrok?.ok === true}`,
+  ...(observation.conclusions || []).slice(0, 8).map(c => `- ${String(c).slice(0, 300)}`)
+] : ["- No observation artifact found."];
 const md = [
   "# EVOLVE — the agents' own evolution report",
   "",
@@ -91,9 +126,15 @@ const md = [
   "",
   ...(skills.length ? skills.map(s => `- ${s}`) : ["- none yet"]),
   "",
+  "## Latest runtime observation",
+  "",
+  ...observationLines,
+  "",
+  "Full evidence: `observations/latest.md` and `observations/latest.json`.",
+  "",
   "## Proposed next evolutions",
   "",
-  ...propose(stats, skills),
+  ...propose(stats, skills, observation),
   ""
 ].join("\n");
 

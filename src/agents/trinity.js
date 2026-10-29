@@ -9,12 +9,15 @@ import { chatRoute } from "../llm/router.js";
 import { runAgent } from "./runtime.js";
 import { governor } from "./governor.js";
 import { emit, newRunId, replay, runs } from "./codex.js";
+import { normalizeSubtasks } from "./subtasks.js";
+import { safeToolTraceText } from "./tool-trace.js";
+export { normalizeSubtasks } from "./subtasks.js";
 
 const SQUAD_N = () => Math.max(1, Number(process.env.GROK_SQUAD_N) || 4);
 const SQUAD_STEPS = () => Math.max(1, Number(process.env.GROK_SQUAD_STEPS) || 12);
 const DEEP_ROUNDS = () => Math.max(1, Number(process.env.GROK_DEEP_ROUNDS) || 3);
 
-const PLANNER_PROMPT = `You are the squad planner. Break the user's request into 2-4 independent, self-contained subtasks that different workers can execute in parallel without talking to each other. Reply with ONLY a JSON array of short task strings. No prose, no markdown fences.`;
+const PLANNER_PROMPT = () => `You are the squad planner. Break the user's request into exactly ${SQUAD_N()} independent, self-contained subtasks that different workers can execute in parallel without talking to each other. Make the subtasks complementary: separate runtime/environment inspection, bridge/service wiring, evidence validation, or other distinct angles that fit the request. Reply with ONLY a JSON array containing exactly ${SQUAD_N()} short task strings. No prose, no markdown fences.`;
 
 const LEAD_PROMPT = `You are the squad lead. Merge the workers' findings below into ONE definitive answer to the user's request. Resolve contradictions, drop unsupported claims, keep any citations (URLs). Do NOT narrate what workers said — give the merged conclusion itself, directly.`;
 
@@ -28,32 +31,6 @@ export const DEEP_ANGLES = [
 ];
 
 // ---------- planning ----------
-export function normalizeSubtasks(reply, { fallback = 3, max = 4 } = {}) {
-  const text = String(reply || "");
-  let items = [];
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start !== -1 && end > start) {
-    try {
-      const parsed = JSON.parse(text.slice(start, end + 1));
-      if (Array.isArray(parsed)) items = parsed.filter(s => typeof s === "string" && s.trim()).map(s => s.trim());
-    } catch { /* planner produced invalid JSON — fall through */ }
-  }
-  // dedupe case-insensitively
-  const seen = new Set();
-  items = items.filter(t => {
-    const k = t.toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  if (!items.length) {
-    // Planner failed to produce JSON: fall back to N independent solvers of the same problem
-    return Array.from({ length: fallback }, (_, i) =>
-      `Independently research and answer part ${i + 1} of the request: "${text.slice(0, 200) || "the request"}".`);
-  }
-  return items.slice(0, max);
-}
 
 // ---------- lead quality gate ----------
 export function weakLead(text, workers = 3) {
@@ -99,32 +76,57 @@ async function pool(items, lanes, fn) {
   return out;
 }
 
+function redactTraceText(value, maxChars = 2400) {
+  return safeToolTraceText(value, maxChars);
+}
+
 // ---------- SQUAD ----------
 export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
   runId = runId || newRunId();
-  emit(runId, "run.start", { mode: "squad", question });
+  emit(runId, "run.start", { mode: "squad", question: redactTraceText(question, 6000) });
 
   // 1. PLAN
   const planReply = await chatRoute(
-    [{ role: "system", content: PLANNER_PROMPT }, { role: "user", content: question }],
+    [{ role: "system", content: PLANNER_PROMPT() }, { role: "user", content: question }],
     [], { mode: "think" });
-  const subtasks = normalizeSubtasks(planReply.content, { fallback: SQUAD_N() });
-  emit(runId, "plan.ready", { subtasks });
+  const desiredWorkers = SQUAD_N();
+  const subtasks = normalizeSubtasks(planReply.content, {
+    fallback: desiredWorkers, min: desiredWorkers, max: desiredWorkers, source: question
+  });
+  emit(runId, "plan.ready", { subtasks: subtasks.map(sub => redactTraceText(sub, 600)) });
   onNote?.({ note: `Plan ready: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}` });
 
   // 2. SQUAD — real agents in parallel, governor-gated, failure-isolated
   const results = await pool(subtasks, governor.target(), async (sub, i) => {
-    emit(runId, "agent.spawn", { agent: `worker-${i + 1}`, task: sub });
+    const workerId = `worker-${i + 1}`;
+    const startedAt = Date.now();
+    emit(runId, "agent.spawn", { agent: workerId, task: redactTraceText(sub, 600) });
+    emit(runId, "worker.start", { agent: workerId, at_ms: startedAt });
     try {
       const answer = await runAgent(
-        { ...agent, id: `worker-${i + 1}`, name: `Worker ${i + 1}` },
+        { ...agent, id: workerId, name: `Worker ${i + 1}` },
         `${sub}\n\n(Context: original request was "${question}")`,
-        tools, { maxSteps: SQUAD_STEPS(), runId, agentName: `worker-${i + 1}` });
-      emit(runId, "agent.done", { agent: `worker-${i + 1}` });
+        tools, { maxSteps: SQUAD_STEPS(), runId, agentName: workerId });
+      const answerText = String(answer ?? "");
+      emit(runId, "worker.finding", {
+        agent: workerId, ok: true, task: redactTraceText(sub, 600),
+        answer: redactTraceText(answerText, 2400), answer_chars: answerText.length
+      });
+      emit(runId, "agent.done", { agent: workerId });
+      emit(runId, "worker.finish", {
+        agent: workerId, ok: true, at_ms: Date.now(), duration_ms: Date.now() - startedAt
+      });
       return { ok: true, answer };
     } catch (e) {
-      emit(runId, "error", { agent: `worker-${i + 1}`, error: e.message });
-      return { ok: false, error: e.message };
+      emit(runId, "error", { agent: workerId, error: safeToolTraceText(e.message || e, 500) });
+      emit(runId, "worker.finding", {
+        agent: workerId, ok: false, task: redactTraceText(sub, 600),
+        error: redactTraceText(e.message || e, 500), answer_chars: 0
+      });
+      emit(runId, "worker.finish", {
+        agent: workerId, ok: false, at_ms: Date.now(), duration_ms: Date.now() - startedAt
+      });
+      return { ok: false, error: safeToolTraceText(e.message || e, 500) };
     }
   });
 
@@ -150,7 +152,10 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
       [{ role: "user", content: "Your previous merge was rejected: it narrated workers instead of giving the merged answer. Give the definitive answer directly." }]),
       [], { mode: "think" })).content;
   }
-  emit(runId, "lead.merge", { weak: weak || null });
+  emit(runId, "lead.merge", {
+    weak: weak || null, workers: `${okCount}/${subtasks.length}`,
+    answer_excerpt: redactTraceText(lead, 2400), answer_chars: String(lead || "").length
+  });
   emit(runId, "run.done", { mode: "squad", workers: `${okCount}/${subtasks.length}` });
   return lead;
 }
@@ -159,7 +164,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
 export async function runDeep(agent, question, tools, { rounds, firstAnswer, onNote, runId } = {}) {
   runId = runId || newRunId();
   const maxRounds = rounds || DEEP_ROUNDS();
-  emit(runId, "run.start", { mode: "deep", question });
+  emit(runId, "run.start", { mode: "deep", question: redactTraceText(question, 6000) });
 
   // Draft answer: reuse the chat answer if the caller already produced one
   const draft = firstAnswer || await runAgent(agent, question, tools, { runId, agentName: agent.id });
@@ -183,8 +188,8 @@ export async function runDeep(agent, question, tools, { rounds, firstAnswer, onN
           `Review the draft answer below as ${angle}. List concrete corrections (one per line, prefixed with "Correction:") or reply "no corrections".\n\nDraft:\n${draft}`,
           tools, { maxSteps: 6, runId, agentName: `reviewer-${i + 1}` }) };
       } catch (e) {
-        emit(runId, "error", { agent: `reviewer-${i + 1}`, error: e.message });
-        return { ok: false, error: e.message };
+        emit(runId, "error", { agent: `reviewer-${i + 1}`, error: safeToolTraceText(e.message || e, 500) });
+        return { ok: false, error: safeToolTraceText(e.message || e, 500) };
       }
     });
 

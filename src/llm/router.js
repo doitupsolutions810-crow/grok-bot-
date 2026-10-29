@@ -1,12 +1,7 @@
 import OpenAI from "openai";
+import { resolveModelChain } from "./model-chain.js";
 
-const CHAIN = process.env.MODEL_CHAIN
-  ? process.env.MODEL_CHAIN.split(",").map(s => s.trim()).filter(Boolean)
-  : [
-      process.env.LLM_MODEL || "llama3.1:8b",   // primary
-      "llama3.2:3b",                             // fallback 1 (smaller, always loadable)
-      "llama3.2:1b"                              // last resort
-    ];
+const CHAIN = resolveModelChain();
 
 const clients = {};
 function client(model) {

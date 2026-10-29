@@ -94,35 +94,54 @@ async function ensureModel(model, log) {
 }
 
 async function ensureSandbox(docker, log) {
-  const name = "grok-sandbox";
+  const name = String(process.env.GROK_SANDBOX_CONTAINER || "grok-sandbox").trim() || "grok-sandbox";
+  const desiredNetwork = String(process.env.GROK_SANDBOX_NETWORK || "").trim();
   const containers = await docker.listContainers({ all: true });
-  const existing = containers.find(c => c.Names.includes(`/${name}`));
+  let existing = containers.find(c => c.Names.includes("/" + name));
+
+  // In the integrated profile, workers must resolve grok-bot and avrone from
+  // their terminal container too. A container created on Docker's default
+  // bridge cannot resolve Compose service names on the Compose network.
+  // Recreate only the disposable sandbox container when needed; its named
+  // grok_workspace volume is mounted separately and is deliberately preserved.
+  if (existing && desiredNetwork) {
+    const container = docker.getContainer(existing.Id);
+    const info = await container.inspect();
+    const networks = info.NetworkSettings?.Networks || {};
+    if (!networks[desiredNetwork]) {
+      log("[boot] Recreating terminal sandbox on configured network " + desiredNetwork +
+        " (persistent grok_workspace volume preserved).");
+      await container.remove({ force: true, v: false });
+      existing = null;
+    }
+  }
+
   if (!existing) {
-    // First boot: the sandbox image may not be on the host yet — pull-on-demand
-    // instead of failing the boot with a 404.
+    // First boot: pull only if this image is missing.
     await ensureImage(docker, "ubuntu:24.04", log);
-    // Hardened sandbox: no caps, no new privileges, pids/tmp limits, and the
-    // shared grok_workspace NAMED volume (container paths don't work in Binds —
-    // they resolve on the HOST, so we use a named volume managed by Docker).
+    const hostConfig = {
+      AutoRemove: false,
+      CapDrop: ["ALL"],
+      CapAdd: ["CHOWN", "SETUID", "SETGID"],
+      SecurityOpt: ["no-new-privileges:true"],
+      Memory: 512 * 1024 * 1024,
+      PidsLimit: 256,
+      Tmpfs: { "/tmp": "rw,noexec,nosuid,size=64m" },
+      Binds: ["grok_workspace:/workspace:rw"]
+    };
+    if (desiredNetwork) hostConfig.NetworkMode = desiredNetwork;
     await docker.createContainer({
       name,
       Image: "ubuntu:24.04",
       Cmd: ["sleep", "infinity"],
-      HostConfig: {
-        AutoRemove: false,
-        CapDrop: ["ALL"],
-        CapAdd: ["CHOWN", "SETUID", "SETGID"],
-        SecurityOpt: ["no-new-privileges:true"],
-        Memory: 512 * 1024 * 1024,
-        PidsLimit: 256,
-        Tmpfs: { "/tmp": "rw,noexec,nosuid,size=64m" },
-        Binds: ["grok_workspace:/workspace:rw"]
-      }
+      HostConfig: hostConfig
     }).then(c => c.start());
-    log(`[boot] Created hardened terminal sandbox: ${name} (workspace: grok_workspace volume)`);
+    log("[boot] Created hardened terminal sandbox: " + name +
+      " (workspace: grok_workspace volume" +
+      (desiredNetwork ? ", network: " + desiredNetwork : "") + ").");
   } else if (existing.State !== "running") {
     await docker.getContainer(existing.Id).start().catch(() => {});
-    log(`[boot] Resumed terminal sandbox: ${name}`);
+    log("[boot] Resumed terminal sandbox: " + name);
   }
 }
 

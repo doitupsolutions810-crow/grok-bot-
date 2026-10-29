@@ -96,6 +96,32 @@ const results = [
   })
 ];
 
+if (process.env.AVRONE_URL) {
+  results.push(await test("AVRONE bridge: private-network reachability and real chat", async () => {
+    const base = process.env.AVRONE_URL.replace(/\/$/, "");
+    const statusResponse = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(10000) });
+    if (!statusResponse.ok) throw new Error(`status HTTP ${statusResponse.status}`);
+    const status = await statusResponse.json();
+    if (!status || typeof status !== "object" || !status.runner || !status.provider) {
+      throw new Error("AVRONE status response missing runner/provider fields");
+    }
+    const invokeResponse = await fetch(`${BASE}/api/tools/avrone.squad/invoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Reply with exactly AVRONE_BRIDGE_OK.", mode: "squad" }),
+      signal: AbortSignal.timeout(180000)
+    });
+    if (!invokeResponse.ok) throw new Error(`avrone.squad HTTP ${invokeResponse.status}: ${(await invokeResponse.text()).slice(0, 240)}`);
+    const bridge = await invokeResponse.json();
+    if (!bridge.ok || typeof bridge.answer !== "string" || bridge.answer.trim().length === 0) {
+      throw new Error(`avrone.squad returned no successful answer: ${JSON.stringify(bridge).slice(0, 300)}`);
+    }
+    return `reachable at ${base}; runner=${status.runner}; avrone.squad executed (${bridge.answer.length} answer chars)`;
+  }));
+} else {
+  console.log("SKIP AVRONE bridge live test — AVRONE_URL is not configured");
+}
+
 const passed = results.filter(Boolean).length;
 console.log(`${passed}/${results.length} live tests passed`);
 process.exit(passed === results.length ? 0 : 1);

@@ -1,34 +1,110 @@
 name: live-tests
 on:
   push: { branches: [main] }
+  pull_request:
   workflow_dispatch:
 
 jobs:
+  source-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RUNS_DIR: /tmp/grok-bot-runs
+      DATA_DIR: /tmp/grok-bot-data
+      GROK_SQUAD_N: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Parse changed JavaScript
+        run: |
+          node --check src/agents/tool-trace.js
+          node --check src/voice/voice.js
+          node --check tests/voice.test.js
+          node --check src/llm/model-chain.js
+          node --check src/llm/router.js
+          node --check src/boot/preinstall.js
+          node --check src/server.js
+          node --check src/tools/avrone.js
+          node --check tests/avrone-tool.test.js
+          node --check tests/model-chain.test.js
+          node --check tests/compose-env.test.js
+          node --check src/router.js
+          node scripts/check-inline-js.js
+          node --check tests/tool-trace.test.js
+          node --check src/agents/subtasks.js
+          node --check src/agents/trinity.js
+          node --check src/agents/runtime.js
+          node --check src/boot/docker.js
+          node --check scripts/evolve.js
+          node --check scripts/squad-observe.js
+          node --check tests/trinity.unit.test.js
+          node --check tests/live.test.js
+      - name: Test exact S-mode lane contract (no package install needed)
+        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js tests/voice.test.js
+      - name: Preserve source-check evidence
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          node --version > diagnostics/node-version.txt 2>&1 || true
+          node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js tests/voice.test.js > diagnostics/unit-tests.txt 2>&1 || true
+          git status --short > diagnostics/git-status.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grok-bot-source-evidence-${{ github.run_id }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
   live:
-    runs-on: ubuntu-24.04    # pinned: ubuntu-latest migrated to Ubuntu 26 on 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       LLM_MODEL: qwen2.5:3b
       MODELS_REQUIRED: qwen2.5:3b,nomic-embed-text
+      MODEL_CHAIN: qwen2.5:3b
+      ENABLE_VISION: "false"
       BOOT_STRICT: "true"
+      AVRONE_BUILD_CONTEXT: Avrone
+      COMPOSE_FILE: docker-compose.yml:docker-compose.integration.yml
+      GROK_SQUAD_N: "2"
+      GROK_MAX_PARALLEL: "2"
+      GROK_MIN_PARALLEL: "2"
+      AVRONE_SQUAD_SIZE: "2"
+      AVRONE_MAX_PARALLEL: "2"
+      AVRONE_MIN_PARALLEL: "2"
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout AVRONE for integrated-stack validation
+        uses: actions/checkout@v4
+        with:
+          repository: doitupsolutions810-crow/Avrone
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'codex/inspect-integration-hardening' && 'codex/inspect-integration-hardening' || 'main' }}
+          path: Avrone
 
-      - name: Config compatibility check (core + full profile)
+      - name: Fast source syntax checks
+        run: |
+          node --check src/agents/trinity.js
+          node --check scripts/evolve.js
+          node --check scripts/squad-observe.js
+          node --check tests/trinity.unit.test.js
+          node --check tests/live.test.js
+
+      - name: Config compatibility check (core + full + integration)
         run: |
           docker compose config --quiet
           docker compose --profile full config --quiet
+          test -f Avrone/Dockerfile
+          test -f Avrone/pyproject.toml
+          python -c "import tomllib; tomllib.load(open('Avrone/pyproject.toml', 'rb'))"
 
-      - name: Bring up the full live stack
-        run: docker compose up -d --build
+      - name: Bring up the full integrated live stack
+        run: docker compose --profile full up -d --build
 
       - name: Wait for boot self-test (real image+model pulls, MCP handshake)
         run: |
-          # server.js binds :3000 only after the full boot chain (daemon, ollama,
-          # real model pulls, MCP handshake, self-test) completes. A first boot on
-          # a fresh runner pulls ~2GB of models, which can outlast a short wait —
-          # size the window to real pulls, and surface the boot logs as run
-          # annotations if the port still never answers.
           ok=0
           for i in $(seq 1 100); do
             if curl -fsS http://localhost:3000/api/status -o status.json; then ok=1; break; fi
@@ -46,18 +122,44 @@ jobs:
             exit 1
           fi
 
-      - name: Live agent tests (real inference, docker exec, browser)
+      - name: Squad normalization unit tests
+        run: docker compose exec -T grok-bot node --test tests/trinity.unit.test.js
+
+      - name: Live agent tests (real inference, Docker exec, browser, AVRONE bridge)
         run: docker compose exec -T grok-bot node tests/live.test.js
 
-      - name: Agents' evolution loop (writes EVOLVE.md from the live runs)
+      - name: Dual-parallel node/server/environment witnesses and bidirectional bridge receipts
+        if: always()
+        run: docker compose exec -T grok-bot node scripts/squad-observe.js
+
+      - name: Agents' recursive evolution loop (reads live observations and writes EVOLVE.md)
+        if: always()
         run: docker compose exec -T grok-bot node scripts/evolve.js
 
       - name: Boot + agent logs on failure
         if: failure()
         run: |
           docker compose logs --tail 300
-          # surface the failure tail as run annotations too (readable without sign-in)
           docker compose logs --tail 40 grok-bot 2>&1 | tail -n 10 | while IFS= read -r l; do
             l="${l//%/%25}"
             echo "::error::${l:0:220}"
           done
+
+      - name: Capture integrated-stack diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          docker compose ps -a > diagnostics/compose-ps.txt 2>&1 || true
+          docker compose logs --no-color --tail 500 > diagnostics/compose.log 2>&1 || true
+          docker compose config > diagnostics/compose-config.yml 2>&1 || true
+          if [ -f status.json ]; then cp status.json diagnostics/status.json; fi
+          if [ -f data/observations/latest.md ]; then cp data/observations/latest.md diagnostics/squad-observation.md; fi
+          if [ -f data/observations/latest.json ]; then cp data/observations/latest.json diagnostics/squad-observation.json; fi
+          if [ -f data/EVOLVE.md ]; then cp data/EVOLVE.md diagnostics/EVOLVE.md; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grok-bot-live-diagnostics-${{ github.run_id }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7

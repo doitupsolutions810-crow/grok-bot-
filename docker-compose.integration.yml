@@ -1,0 +1,74 @@
+# Optional same-network AVRONE ↔ Grok Bot deployment.
+# Run with COMPOSE_FILE=docker-compose.yml:docker-compose.integration.yml.
+# The AVRONE API is reachable by Grok Bot as http://avrone:8710 and is published
+# to the host only on loopback. No Docker socket is mounted into AVRONE.
+services:
+  avrone:
+    networks: [default, grok-integration]
+    build:
+      context: ${AVRONE_BUILD_CONTEXT:-../Avrone}
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      AVRONE_HOST: 0.0.0.0
+      AVRONE_PORT: "8710"
+      AVRONE_PROVIDER: ollama
+      AVRONE_LLM_BASE_URL: http://ollama:11434/v1
+      AVRONE_LLM_MODEL: ${AVRONE_LLM_MODEL:-qwen2.5:3b}
+      # Keep this pass deliberately dual-parallel on both orchestration layers.
+      AVRONE_SQUAD_SIZE: ${AVRONE_SQUAD_SIZE:-2}
+      AVRONE_MAX_PARALLEL: ${AVRONE_MAX_PARALLEL:-2}
+      AVRONE_MIN_PARALLEL: ${AVRONE_MIN_PARALLEL:-2}
+      AVRONE_BRIDGE_ROUNDS: ${AVRONE_BRIDGE_ROUNDS:-1}
+      AVRONE_RUNNER: local
+      AVRONE_ALLOW_NETWORK: "false"
+      AVRONE_AGENTS_CAN_SHELL: "true"
+      AVRONE_GROKBOT_URL: http://grok-bot:3000
+      AVRONE_WORKSPACE: /srv/workspace
+      AVRONE_DATA_DIR: /srv/data
+      HOME: /home/avrone
+    ports:
+      - "127.0.0.1:8710:8710"
+    volumes:
+      - avrone_workspace:/srv/workspace
+      - avrone_data:/srv/data
+    depends_on:
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8710/api/status', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+
+  grok-bot:
+    networks: [default, grok-integration]
+    environment:
+      AVRONE_URL: http://avrone:8710
+      GROK_SANDBOX_NETWORK: grok-integration
+      GROK_SQUAD_N: "2"
+      GROK_MAX_PARALLEL: "2"
+      GROK_MIN_PARALLEL: "2"
+      GROK_SANDBOX_CONTAINER: grok-sandbox-integration
+      ALLOWED_TERMINAL_CONTAINERS: grok-sandbox-integration
+    depends_on:
+      avrone:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      browser:
+        condition: service_started
+      socket-proxy:
+        condition: service_started
+
+volumes:
+  avrone_workspace:
+  avrone_data:
+
+networks:
+  default: {}
+  grok-integration:
+    name: grok-integration
+    internal: true

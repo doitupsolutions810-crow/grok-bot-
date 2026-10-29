@@ -20,7 +20,9 @@ services:
     build: .
     container_name: grok-bot
     restart: unless-stopped
-    ports: ["3000:3000"]
+    # Local-only by default: the console exposes terminal and agent tools.
+    # Put it behind an authenticated reverse proxy before exposing it remotely.
+    ports: ["127.0.0.1:3000:3000"]
     # Lets the in-container AVRONE bridge reach a host-launched AVRONE on Linux too.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -31,6 +33,11 @@ services:
       OLLAMA_URL: http://ollama:11434
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
       MODELS_REQUIRED: ${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text}
+      MODEL_CHAIN: ${MODEL_CHAIN:-}
+      ENABLE_VISION: ${ENABLE_VISION:-false}
+      X_API_BEARER: ${X_API_BEARER:-}
+      X_ACCOUNT: ${X_ACCOUNT:-grok_bot}
+      X_POLL_SECONDS: ${X_POLL_SECONDS:-60}
       BROWSER_WS: ws://browser:3000
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
       BOOT_STRICT: ${BOOT_STRICT:-true}
@@ -48,6 +55,8 @@ services:
       SKILLS_DIR: /app/skills
       WHISPER_URL: ${WHISPER_URL:-}             # full profile: http://whisper:9000 (HTTP STT sidecar)
       PIPER_CMD: ${PIPER_CMD:-}                 # TTS binary override (default: piper)
+      PIPER_URL: ${PIPER_URL:-}                   # optional private Wyoming Piper TCP service
+      TTS_VOICE: ${TTS_VOICE:-en_US-lessac-medium}
       AVRONE_URL: ${AVRONE_URL:-}               # the concluding system bridge -> AVRONE
     volumes:
       - ./config:/app/config
@@ -83,7 +92,11 @@ services:
     image: rhasspy/wyoming-piper:latest
     restart: unless-stopped
     profiles: ["full"]
-    volumes: [./voices:/voices]
+    # Image entrypoint supplies the private TCP listener and --data-dir /data.
+    command: ["--voice", "en_US-lessac-medium", "--download-dir", "/data"]
+    volumes:
+      - ./voices:/voices
+      - piper_data:/data
 
   comfyui:
     image: ghcr.io/comfyanonymous/comfyui:latest
@@ -98,3 +111,4 @@ volumes:
   comfyui_models:
   browser_profile:                  # shared persistent browser computer
   grok_workspace:                   # shared sandbox filesystem for all agents
+  piper_data:                       # downloaded Piper voice models and cache

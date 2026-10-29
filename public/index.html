@@ -67,6 +67,10 @@
   .checks label { display: inline-flex; margin: 0; gap: 5px; align-items: center; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; color: var(--fg); }
   #bar { display: flex; gap: 10px; margin-bottom: 14px; }
   #bar textarea { min-height: 52px; max-height: 160px; resize: none; }
+  .msg-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .listen-btn { border: 1px solid var(--line); background: var(--panel2); color: var(--dim); border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; }
+  .listen-btn:hover { color: var(--fg); border-color: var(--acc); }
+  .listen-btn:disabled { opacity: .65; cursor: wait; }
 </style>
 </head>
 <body>
@@ -212,6 +216,59 @@ function addNote(text) {
   d.textContent = "▸ " + text; $("msgs").appendChild(d); window.scrollTo(0, document.body.scrollHeight);
 }
 
+function addListenButton(messageNode, messageText) {
+  const text = String(messageText || "").trim().slice(0, 1000);
+  if (!text) return;
+  const actions = document.createElement("div");
+  actions.className = "msg-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "listen-btn";
+  button.textContent = "Listen";
+  button.onclick = async () => {
+    button.disabled = true;
+    button.textContent = "Preparing audio…";
+    let objectUrl = null;
+    let audio = null;
+    const restore = () => {
+      button.disabled = false;
+      button.textContent = "Listen";
+    };
+    try {
+      const response = await fetch("/api/voice/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `TTS request failed (HTTP ${response.status}).`);
+      }
+      const blob = await response.blob();
+      if (!blob.size || blob.type && !blob.type.includes("audio/wav")) {
+        throw new Error("TTS returned no WAV audio.");
+      }
+      objectUrl = URL.createObjectURL(blob);
+      audio = new Audio(objectUrl);
+      const release = () => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+        restore();
+      };
+      audio.onended = release;
+      audio.onerror = release;
+      button.textContent = "Playing…";
+      await audio.play();
+    } catch (error) {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      restore();
+      addNote("Audio unavailable: " + (error && error.message ? error.message : "TTS failed."));
+    }
+  };
+  actions.appendChild(button);
+  messageNode.appendChild(actions);
+}
+
 async function send() {
   const text = $("input").value.trim();
   if (!text) return;
@@ -245,6 +302,7 @@ async function send() {
       bot.textContent = out || "…";
     }
     if (pending) bot.textContent = out + `\n\n⏸ Auto Review: approval #${pending} needed (Approvals tab).`;
+    addListenButton(bot, out);
   } catch (e) { bot.textContent = "error: " + e.message; }
 }
 $("send").onclick = send;

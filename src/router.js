@@ -193,8 +193,16 @@ export function makeRouter({ tools, docker }) {
     res.json({ description: await visionTool.run({ imageBase64: req.body.imageBase64, question: req.body.question }) }));
   r.post("/voice/stt", async (req, res) =>
     res.json({ text: await transcribe(Buffer.from(req.body.audioBase64, "base64")) }));
-  r.get("/voice/tts", async (req, res) =>
-    res.json(await speak(String(req.query.text || "").slice(0, 1000))));
+  const sendTts = async (req, res) => {
+    const text = String(req.method === "GET" ? req.query.text || "" : req.body?.text || "").slice(0, 1000);
+    const voice = String(req.method === "GET" ? req.query.voice || "" : req.body?.voice || "");
+    const result = await speak(text, voice || undefined);
+    if (!result.ok) return res.status(503).json({ ok: false, error: result.error || "TTS unavailable." });
+    return res.status(200).set("Cache-Control", "no-store")
+      .set("X-TTS-Voice", result.voice).type("audio/wav").send(result.audio);
+  };
+  r.get("/voice/tts", sendTts); // Keep the legacy GET path; response is now actual WAV audio.
+  r.post("/voice/tts", sendTts); // Keeps text out of URL/access logs.
   r.get("/tasks", (req, res) => res.json(listTasks()));
   r.post("/tasks", (req, res) => res.json({ id: addTask(req.body) }));
   r.post("/tasks/:id/run", async (req, res) => { await runTask(+req.params.id); res.json({ ok: true }); });

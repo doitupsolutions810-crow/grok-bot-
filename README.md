@@ -26,13 +26,15 @@ docker compose logs -f grok-bot
 
 Full profile adds Whisper STT, Piper TTS, and ComfyUI image generation:
 
+The Piper endpoint uses the unauthenticated Wyoming TCP protocol and therefore remains private to the Compose network; do not publish port 10200 to the host or Internet. The API returns WAV audio and the console adds a Listen action for assistant answers.
+
 ```bash
 docker compose --profile full up -d --build
 ```
 
 Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
 
-To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
+To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 120 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
 
 ## What's inside
 
@@ -58,6 +60,7 @@ To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60
 - `GET /ledger`, `POST /feedback` — trace ledger + run feedback
 - `POST /x/trigger` — webhook variant of the @mention poller
 - Plus: `/tools/:name/invoke`, `/rag/*`, `/vision`, `/voice/*`, `/tasks`, `/images/:file`, `/docker/containers`
+- Full-profile TTS uses the private `PIPER_URL=tcp://piper:10200` Wyoming service and returns an actual WAV response from `POST /api/voice/tts`; assistant answers have a **Listen** control in the console. `GET /api/voice/tts?text=...` remains available for existing clients. The sidecar caches its voice model in the persistent `piper_data` volume.
 
 ## Configuration
 
@@ -127,11 +130,43 @@ docker compose exec grok-bot node tests/live.test.js
 
 ## The system bridge (AVRONE ↔ Grok Bot)
 
-The two halves of the system conclude into one:
+For the supported combined deployment, run the two repositories on one private Docker Compose network. This avoids the common failure where AVRONE binds to host loopback but a container tries to reach it through `host.docker.internal`.
 
-- **Grok Bot → AVRONE:** the `avrone.squad` tool lets any Grok Bot agent delegate a whole task to AVRONE's own squad (plan → parallel workers with real tools → lead merge; `mode: "deep"` adds adversarial review waves). Set `AVRONE_URL` (e.g. `http://host.docker.internal:8710`) and it's live; AVRONE answers through its plain `/api/chat`.
-- **AVRONE → Grok Bot:** AVRONE agents already ship the `http_request` tool, so they call Grok Bot's API directly — e.g. `http_request POST http://localhost:3000/api/chat {"message": "...", "mode": "squad"}` — reaching this terminal, browser, team and ledger.
-- **MCP, both ways:** `avrone-mcp` exposes AVRONE to any MCP client (`avrone_squad`, `avrone_chat`, `avrone_deep`, `avrone_tools`); Grok Bot handshakes MCP servers at boot from `config/agents.json`.
+- **Grok Bot → AVRONE:** the `avrone.squad` tool delegates a complete task to AVRONE's squad (plan → parallel workers → lead merge; `mode: "deep"` adds adversarial review waves). The integration overlay sets `AVRONE_URL=http://avrone:8710` and the live suite invokes this actual tool.
+- **Network boundary:** AVRONE is published to the host only at `127.0.0.1:8710`; Grok Bot reaches it by Compose service DNS. The AVRONE container uses its unprivileged image, the local runner, and `AVRONE_ALLOW_NETWORK=false`; the overlay does not mount the Docker socket into AVRONE.
+- **Terminal DNS path:** the integrated profile attaches Grok Bot, AVRONE, and a separate `grok-sandbox-integration` terminal container to the fixed `grok-integration` network. This is distinct from the default `grok-sandbox`; it leaves the core-only sandbox untouched while allowing the independent terminal worker to resolve `grok-bot` and `avrone` service names.
+- **Bridge contract:** both directions reject redirects and caller-controlled destinations, cap prompts at 8,000 characters and requests at 180 seconds; AVRONE's reverse bridge streams with a 64 KiB response ceiling and does not echo remote error bodies. Grok Bot → AVRONE succeeds only with a nonempty textual answer and a run-ID receipt. These controls are unit-tested, but the deployed bridge remains unverified until the live observer succeeds.
+- **AVRONE → Grok Bot:** the dedicated `grokbot.ask` tool calls only Grok Bot's low-privilege `grok-researcher` agent at the configured `AVRONE_GROKBOT_URL=http://grok-bot:3000` origin. It accepts no caller-supplied URL, blocks redirects, caps prompt size, records a bridge receipt, and cannot recursively delegate to AVRONE. It works with generic AVRONE network access still disabled; the Compose network provides the route.
+- **MCP:** `avrone-mcp` exposes AVRONE to MCP clients (`avrone_squad`, `avrone_chat`, `avrone_deep`, `avrone_tools`); Grok Bot handshakes configured MCP servers at boot.
+
+### Run the combined stack
+
+Keep both repositories as siblings:
+
+```text
+workspace/
+  grok-bot-/
+  Avrone/
+```
+
+From the Grok Bot repository root:
+
+```bash
+./launch.sh
+```
+
+When `../Avrone` exists, the launcher runs AVRONE's offline test suite and uses `docker-compose.integration.yml` to start both services. To fail closed instead of allowing core-only mode when AVRONE is missing, run `LAUNCH_REQUIRE_AVRONE=true ./launch.sh`. Run `./verify.sh` for the bounded boot gate and live suite; with the sibling repository present it requires the bridge test too.
+
+## Runtime witnesses and learning loop
+
+For a bounded two-worker runtime observation against the running APIs, run:
+`docker compose exec -T grok-bot node scripts/squad-observe.js`
+
+The observer calls the actual status, governor, container, CodeX replay, AVRONE tool-list and learning-bridge endpoints. It starts a marked S-mode squad run, records worker start/finish intervals and tool-call receipts, captures the Lead result, invokes both bridge directions when AVRONE is configured, and writes:
+- `data/observations/latest.md` — readable node/server/environment findings, agent bridge posts, gaps, and conclusions.
+- `data/observations/latest.json` — structured evidence and per-probe failures.
+
+The observer does not dump the environment or tool arguments and redacts obvious credentials from recorded excerpts. It fails closed when configured workers, real overlap evidence, or bridge receipts are missing. No bridge is declared live without a successful response/receipt.
 
 ## The agents' evolution loop
 
@@ -144,11 +179,7 @@ The agents evolve through their own runs — the same sequential process that bu
 
 ## Launch locally (the sequential process)
 
-`./launch.sh` runs the same sequence used to build the system, in order:
-preflight → models → AVRONE (offline suite, doctor, launch) → Grok Bot (full
-profile, boot self-tests) → live tests → the evolution report. Both consoles
-end up live: AVRONE on `:8710`, Grok Bot on `:3000`, with `EVOLVE.md` in
-`./data`.
+`./launch.sh` runs preflight → AVRONE offline test gate (when the sibling checkout exists) → integrated Compose stack → strict boot gate → live tests → evolution report. In integrated mode AVRONE is available to the host at `127.0.0.1:8710` and to Grok Bot as `http://avrone:8710`; the Grok Bot console is available at `http://localhost:3000`.
 
 ### Verify without CI
 

@@ -7,7 +7,7 @@
 import { chatRoute } from "../llm/router.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
 import { emit } from "./codex.js";
-
+import { safeToolTraceText, summarizeToolResult } from "./tool-trace.js";
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;
   const ctx = {
@@ -51,9 +51,9 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
       try {
         result = tool ? await tool.run(parsedArgs, ctx) : { error: `unknown tool: ${name}` };
       } catch (e) {
-        result = { error: e.message };
+        result = { error: safeToolTraceText(e.message || e, 500) };
       }
-      emit(opts.runId, "tool.result", { agent: ctx.agent, tool: name, ok: !result?.error });
+      emit(opts.runId, "tool.result", { agent: ctx.agent, tool: name, ...summarizeToolResult(result) });
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }
   }

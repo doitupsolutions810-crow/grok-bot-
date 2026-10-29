@@ -2,6 +2,7 @@ export function safeToolTraceText(value, cap = 1200) {
   return String(value ?? "")
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/(\bhttps?:\/\/)[^/\s@]+:[^/\s@]+@/gi, "$1[REDACTED]@")
     // Redact sensitive values in dotenv, YAML-like, JSON, and URL-query output.
     // Match sensitive key names even with prefixes/suffixes such as AWS_SECRET_ACCESS_KEY.
     .replace(

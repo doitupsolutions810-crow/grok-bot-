@@ -20,6 +20,7 @@ test("trace excerpts redact bearer credentials and common secret assignments", (
   const redacted = safeToolTraceText(text);
   assert.doesNotMatch(redacted, /abc\.def\.ghi|secret-value|other-secret/);
   assert.match(redacted, /Bearer \[REDACTED\]/);
+  assert.doesNotMatch(safeToolTraceText("https://user:password-secret@example.test/path"), /user:password-secret/);
 });
 
 test("JSON credentials and prefixed cloud-secret names are redacted", () => {

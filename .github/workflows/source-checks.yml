@@ -21,13 +21,12 @@ jobs:
           node-version: "24"
       - name: Static JavaScript syntax checks
         run: |
+          node --check src/agents/subtasks.js
           node --check src/agents/trinity.js
           node --check scripts/evolve.js
           node --check scripts/squad-observe.js
           node --check tests/trinity.unit.test.js
           node --check tests/live.test.js
-      - name: Install runtime dependencies
-        run: npm install --omit=dev
       - name: Test squad worker-count contract
         run: node --test tests/trinity.unit.test.js
       - name: Preserve source-check evidence

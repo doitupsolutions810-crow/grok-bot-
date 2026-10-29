@@ -90,6 +90,7 @@ function countOverlappingPairs(intervals) {
 }
 
 async function saveReport() {
+  snapshot.failures = failures.slice();
   mkdirSync(REPORT_DIR, { recursive: true });
   const jsonPath = join(REPORT_DIR, "latest.json"), mdPath = join(REPORT_DIR, "latest.md");
   writeFileSync(jsonPath, JSON.stringify(snapshot, null, 2) + "\n");

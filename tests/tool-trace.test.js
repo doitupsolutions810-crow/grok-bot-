@@ -22,6 +22,19 @@ test("trace excerpts redact bearer credentials and common secret assignments", (
   assert.match(redacted, /Bearer \[REDACTED\]/);
 });
 
+test("JSON credentials and prefixed cloud-secret names are redacted", () => {
+  const sample = '{"token":"json-token-123","api_key":"json-key-123","password":"json-password-123","AWS_SECRET_ACCESS_KEY":"aws-secret-123","GITHUB_TOKEN":"github-token-123"}';
+  const redacted = safeToolTraceText(sample);
+  assert.doesNotMatch(redacted, /json-token-123|json-key-123|json-password-123|aws-secret-123|github-token-123/);
+  assert.match(redacted, /\\[REDACTED\\]/);
+});
+
+test("secret values in URL query parameters are redacted without swallowing later parameters", () => {
+  const redacted = safeToolTraceText("https://example.test/?token=query-token-123&mode=read");
+  assert.doesNotMatch(redacted, /query-token-123/);
+  assert.match(redacted, /mode=read/);
+});
+
 test("tool output receipts are bounded", () => {
   const receipt = summarizeToolResult({ ok: true, stdout: "x".repeat(5000) });
   assert.equal(receipt.ok, true);

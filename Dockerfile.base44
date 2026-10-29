@@ -1,0 +1,14 @@
+# Base44 development image: system dependencies only — application source is
+# bind-mounted from the checkout and dependencies are synced at container start.
+FROM node:22
+
+# docker.io      -> terminal tool shells out to `docker exec` (DOCKER_HOST=socket-proxy)
+# python3/make/g++ -> better-sqlite3 native build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates python3 make g++ docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# MCP servers pre-installed so the boot handshake never depends on the registry.
+RUN npm install -g @modelcontextprotocol/server-filesystem
+
+WORKDIR /app

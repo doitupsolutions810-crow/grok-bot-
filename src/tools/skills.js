@@ -43,7 +43,7 @@ export function loadPlaybooks() {
 }
 
 async function withSharedBrowser(fn) {
-  const browser = await chromium.connectOverCDP(process.env.BROWSER_WS || "ws://browser:3000");
+  const browser = await chromium.connectOverCDP(process.env.BROWSER_WS || "http://browser:3000");
   try {
     const ctx = browser.contexts()[0] || (await browser.newContext());
     const page = ctx.pages()[0] || (await ctx.newPage());

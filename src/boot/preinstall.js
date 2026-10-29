@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { modelPresent } from "./models.js";
 
 const REQUIRED_IMAGES = [
   "ollama/ollama:latest",
@@ -40,7 +41,7 @@ export async function preinstall(docker, { log = console.log } = {}) {
 // The CDP server answers plain HTTP GET /json/version on the same port as
 // the websocket (BROWSER_WS), which makes it a perfect readiness probe.
 function browserProbe() {
-  const ws = process.env.BROWSER_WS || "ws://browser:3000";
+  const ws = process.env.BROWSER_WS || "http://browser:3000";
   return `${ws.replace(/^ws/, "http").replace(/\/+$/, "")}/json/version`;
 }
 
@@ -58,13 +59,13 @@ function pullImage(docker, image, log) {
     }));
 }
 
-async function modelPresent(ollama, model) {
+async function hasModel(ollama, model) {
   const tags = await fetch(`${ollama}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-  return !!tags.models?.some(m => m.name === model);
+  return modelPresent(tags, model);
 }
 
 async function pullModel(ollama, model, log) {
-  if (await modelPresent(ollama, model)) { log(`[boot] model present: ${model}`); return true; }
+  if (await hasModel(ollama, model)) { log(`[boot] model present: ${model}`); return true; }
   log(`[boot] pulling model ${model}...`);
   await fetch(`${ollama}/api/pull`, {
     method: "POST", headers: { "content-type": "application/json" },
@@ -72,7 +73,7 @@ async function pullModel(ollama, model, log) {
   }).catch(() => { /* the poll below is the source of truth, not the POST */ });
   const deadline = Date.now() + MODEL_PULL_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (await modelPresent(ollama, model)) { log(`[boot] model ready: ${model}`); return true; }
+    if (await hasModel(ollama, model)) { log(`[boot] model ready: ${model}`); return true; }
     await new Promise(r => setTimeout(r, 3000));
   }
   throw new Error(`model ${model} did not become ready within ${MODEL_PULL_TIMEOUT_MS / 60000} min — check ollama storage or network`);

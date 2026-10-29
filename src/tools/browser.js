@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 // are shared between bots. We reuse the existing context/pages rather than
 // creating new ones, so sessions stay warm.
 async function connectCDP() {
-  const ws = process.env.BROWSER_WS || "ws://browser:3000";
+  const ws = process.env.BROWSER_WS || "http://browser:3000";
   let lastErr;
   // 3 attempts: a cold/restarting browser container must not fail the boot
   // self-test (or a live tool call) on a transient refusal.

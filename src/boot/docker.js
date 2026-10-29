@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { modelPresent } from "./models.js";
 
 // Connects to the real Docker daemon at boot — directly via socket, or through
 // the socket proxy when DOCKER_HOST is set (the hardened deployment path).
@@ -81,7 +82,7 @@ async function ensureModel(model, log) {
   }
   const present = async () => {
     const list = await fetch(`${base}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-    return !!list.models?.some(m => m.name === model);
+    return modelPresent(list, model);
   };
   if (await present()) { log(`[boot] Model ready: ${model}`); return; }
   log(`[boot] Pulling model ${model} (one-time, may take a while)...`);

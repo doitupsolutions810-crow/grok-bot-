@@ -31,7 +31,7 @@ services:
       OLLAMA_URL: http://ollama:11434
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
       MODELS_REQUIRED: ${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text}
-      BROWSER_WS: ws://browser:3000
+      BROWSER_WS: http://browser:3000
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
       BOOT_STRICT: ${BOOT_STRICT:-true}
       # Governor (Avrone) — health-gated parallelism
@@ -64,12 +64,13 @@ services:
     # GPU: uncomment deploy.resources.devices [driver: nvidia, count: all, capabilities: [gpu]]
 
   browser:
-    image: mcr.microsoft.com/playwright:v1.64.1-jammy
+    build: ./browser-service
     container_name: grok-browser
     restart: unless-stopped
     command: node /app/computer.js
     volumes:
       - ./browser-service/computer.js:/app/computer.js:ro
+      - ./browser-service/cdp-proxy.js:/app/cdp-proxy.js:ro
       - browser_profile:/profile        # logins + cookies persist across restarts & bots
 
   whisper:

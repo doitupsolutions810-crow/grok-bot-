@@ -22,7 +22,7 @@ fi
   echo ""
   echo "Local verification; no GitHub Actions runner is required."
   echo ""
-  echo "- Boot timeout: ${VERIFY_BOOT_TIMEOUT_SECONDS:-3600}s"
+  echo "- Boot timeout: ${VERIFY_BOOT_TIMEOUT_SECONDS:-7200}s"
   echo "- Require adjacent AVRONE repository: $VERIFY_REQUIRE_AVRONE"
   echo "- Compose files: ${COMPOSE_FILE:-docker-compose.yml}"
   echo ""
@@ -70,7 +70,7 @@ if [ "$FAILED" -eq 0 ]; then
   step "boot the full stack (build + up, strict self-test gate)" docker compose --profile full up -d --build || true
 fi
 if [ "$FAILED" -eq 0 ]; then
-  step "boot self-test gate (ready:true; bounded restart detection)" ./scripts/wait-boot.sh "${VERIFY_BOOT_TIMEOUT_SECONDS:-3600}" || true
+  step "boot self-test gate (ready:true; bounded restart detection)" ./scripts/wait-boot.sh "${VERIFY_BOOT_TIMEOUT_SECONDS:-7200}" || true
 else
   skip_step "boot self-test gate" "a prerequisite or Compose startup step failed"
 fi

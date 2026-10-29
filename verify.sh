@@ -1,7 +1,7 @@
 #!/bin/sh
 # Local, GitHub-independent verification for the self-hosted Grok Bot stack.
-# .env.full enables vision; first boot may pull several GB, so the default boot
-# gate is 60 minutes. Increase VERIFY_BOOT_TIMEOUT_SECONDS for slow hosts.
+# When a sibling AVRONE checkout exists, verification runs the integrated stack
+# and requires the bridge live test; otherwise the report explicitly says partial.
 set -u
 
 REPORT="data/VERIFY.md"
@@ -11,6 +11,12 @@ FAILED=0
 SKIPPED=0
 mkdir -p data
 
+if [ -d "$AVRONE_DIR" ]; then
+  export AVRONE_BUILD_CONTEXT="${AVRONE_BUILD_CONTEXT:-$AVRONE_DIR}"
+  export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml:docker-compose.integration.yml}"
+  VERIFY_REQUIRE_AVRONE=true
+fi
+
 {
   echo "# Verify — $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo ""
@@ -18,6 +24,7 @@ mkdir -p data
   echo ""
   echo "- Boot timeout: ${VERIFY_BOOT_TIMEOUT_SECONDS:-3600}s"
   echo "- Require adjacent AVRONE repository: $VERIFY_REQUIRE_AVRONE"
+  echo "- Compose files: ${COMPOSE_FILE:-docker-compose.yml}"
   echo ""
 } > "$REPORT"
 
@@ -49,13 +56,10 @@ require_avrone_failure() {
   FAILED=1
 }
 
-# Preserve an operator config; on a fresh checkout use the documented full preset.
 if [ ! -f .env ]; then
   step "select default full configuration" cp .env.full .env || true
 fi
 
-# Gate expensive operations on cheap prerequisites so a missing Docker daemon or
-# invalid Compose file fails immediately instead of wasting a 60-minute wait.
 if [ "$FAILED" -eq 0 ]; then
   step "Docker CLI, Compose v2, and daemon access" sh -c 'command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1' || true
 fi
@@ -71,7 +75,7 @@ else
   skip_step "boot self-test gate" "a prerequisite or Compose startup step failed"
 fi
 if [ "$FAILED" -eq 0 ]; then
-  step "live agent tests (real inference, Docker terminal, browser, squad)" docker compose exec -T grok-bot node tests/live.test.js || true
+  step "live agent tests (real inference, Docker terminal, browser, squad, and bridge)" docker compose exec -T grok-bot node tests/live.test.js || true
 else
   skip_step "live agent tests" "the boot gate did not pass"
 fi
@@ -81,9 +85,6 @@ else
   skip_step "agents' evolution loop" "a required prior gate did not pass"
 fi
 
-# AVRONE's suite is independent diagnostics. A missing adjacent repo is an
-# explicit partial result by default; set VERIFY_REQUIRE_AVRONE=true for the
-# combined system release gate.
 if [ -d "$AVRONE_DIR" ]; then
   if command -v python3 >/dev/null 2>&1; then
     step "AVRONE offline suite (isolated venv)" env AVRONE_DIR="$AVRONE_DIR" sh -c 'cd "$AVRONE_DIR" && { [ -x .venv/bin/python ] || python3 -m venv .venv; } && .venv/bin/python -m pip install -q -e ".[dev]" && .venv/bin/python -m pytest -q' || true

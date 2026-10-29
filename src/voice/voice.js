@@ -101,6 +101,7 @@ class WyomingReader {
     for (;;) {
       const newline = this.buffer.indexOf(0x0a);
       if (newline >= 0) {
+        if (newline > limit) throw new Error("Piper sent an oversized event header.");
         const line = this.buffer.subarray(0, newline).toString("utf8");
         this.buffer = this.buffer.subarray(newline + 1);
         return line;

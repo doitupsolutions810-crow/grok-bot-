@@ -117,9 +117,9 @@ async function pool(items, lanes, fn) {
 
 function redactTraceText(value, maxChars = 2400) {
   return String(value ?? "")
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\\s\\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
-    .replace(/\\bBearer\\s+[A-Za-z0-9._~+\\/-]+=*/gi, "Bearer [REDACTED]")
-    .replace(/(api[_-]?key|token|password|secret|authorization|cookie|private[_ -]?key)(\\s*[:=]\\s*)(["']?)[^\\s"',;]+/gi, "$1$2[REDACTED]")
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/(api[_-]?key|token|password|secret|authorization|cookie|private[_ -]?key)(\s*[:=]\s*)(["']?)[^\s"',;]+/gi, "$1$2[REDACTED]")
     .slice(0, maxChars);
 }
 
@@ -148,7 +148,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
     try {
       const answer = await runAgent(
         { ...agent, id: workerId, name: `Worker ${i + 1}` },
-        `${sub}\\n\\n(Context: original request was "${question}")`,
+        `${sub}\n\n(Context: original request was "${question}")`,
         tools, { maxSteps: SQUAD_STEPS(), runId, agentName: workerId });
       const answerText = String(answer ?? "");
       emit(runId, "worker.finding", {

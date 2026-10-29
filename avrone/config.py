@@ -5,6 +5,7 @@ can change env vars and build a fresh Settings.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,12 +60,26 @@ def _env(name: str, default: str = ""):
     return lambda: os.getenv(name, default)
 
 
-def _int(name: str, default: int):
-    return lambda: int(os.getenv(name, str(default)))
+def _int(name: str, default: int, minimum: int = 0):
+    """Read a non-negative integer setting without letting bad env text crash boot."""
+    def read() -> int:
+        try:
+            value = int(os.getenv(name, str(default)).strip())
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return value if value >= minimum else default
+    return read
 
 
-def _float(name: str, default: float):
-    return lambda: float(os.getenv(name, str(default)))
+def _float(name: str, default: float, minimum: float = 0.0):
+    """Read finite numeric settings; reject NaN, infinities, and negative durations."""
+    def read() -> float:
+        try:
+            value = float(os.getenv(name, str(default)).strip())
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return value if math.isfinite(value) and value >= minimum else default
+    return read
 
 
 def _bool(name: str, default: bool):
@@ -93,14 +108,14 @@ class Settings:
     llm_backoff: float = field(default_factory=_float("AVRONE_LLM_BACKOFF", 1.0))  # seconds, doubles per try
     # --- Gateway: extra providers tried in order when the primary fails ---
     llm_fallbacks: str = field(default_factory=_env("AVRONE_LLM_FALLBACKS"))  # e.g. "openrouter:x-ai/grok-4,ollama:llama3.1"
-    breaker_threshold: int = field(default_factory=_int("AVRONE_BREAKER_THRESHOLD", 3))
+    breaker_threshold: int = field(default_factory=_int("AVRONE_BREAKER_THRESHOLD", 3, 1))
     breaker_cooldown: float = field(default_factory=_float("AVRONE_BREAKER_COOLDOWN", 30))
 
     # --- Orchestration (Grok Heavy style squad) ---
-    squad_size: int = field(default_factory=_int("AVRONE_SQUAD_SIZE", 4))
-    deep_squad_size: int = field(default_factory=_int("AVRONE_DEEP_SQUAD_SIZE", 4))
-    max_parallel: int = field(default_factory=_int("AVRONE_MAX_PARALLEL", 6))  # concurrent LLM calls
-    max_steps: int = field(default_factory=_int("AVRONE_MAX_STEPS", 6))
+    squad_size: int = field(default_factory=_int("AVRONE_SQUAD_SIZE", 4, 1))
+    deep_squad_size: int = field(default_factory=_int("AVRONE_DEEP_SQUAD_SIZE", 4, 1))
+    max_parallel: int = field(default_factory=_int("AVRONE_MAX_PARALLEL", 6, 1))  # concurrent LLM calls
+    max_steps: int = field(default_factory=_int("AVRONE_MAX_STEPS", 6, 1))
     max_spawn_depth: int = field(default_factory=_int("AVRONE_MAX_SPAWN_DEPTH", 2))
     # Wall-clock cap (seconds) on one agent's whole run; 0 = no cap. A worker that hits it is
     # reported as timed out and the squad merges the others instead of waiting forever.
@@ -108,15 +123,15 @@ class Settings:
     # --- Health / thermal governor (avrone/governor.py): fewer parallel workers on a hot,
     # loaded or low-memory node. Advisory: never below min_parallel (>= 1).
     governor: bool = field(default_factory=_bool("AVRONE_GOVERNOR", True))
-    min_parallel: int = field(default_factory=_int("AVRONE_MIN_PARALLEL", 1))
-    thermal_max_c: float = field(default_factory=_float("AVRONE_THERMAL_MAX_C", 85))
+    min_parallel: int = field(default_factory=_int("AVRONE_MIN_PARALLEL", 1, 1))
+    thermal_max_c: float = field(default_factory=_float("AVRONE_THERMAL_MAX_C", 85, 1.0))
 
     # --- Environment (Sovereign OS layer) ---
     workspace: Path = field(default_factory=_path("AVRONE_WORKSPACE", "./workspace"))
     runner: str = field(default_factory=_env("AVRONE_RUNNER", "auto"))  # auto | docker | local
     docker_image: str = field(default_factory=_env("AVRONE_DOCKER_IMAGE", "python:3.12-slim"))
     allow_network: bool = field(default_factory=_bool("AVRONE_ALLOW_NETWORK", True))
-    command_timeout: int = field(default_factory=_int("AVRONE_COMMAND_TIMEOUT", 120))
+    command_timeout: int = field(default_factory=_int("AVRONE_COMMAND_TIMEOUT", 120, 1))
 
     # --- Access control ---
     admin_token: str = field(default_factory=_env("AVRONE_ADMIN_TOKEN"))

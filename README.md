@@ -127,11 +127,30 @@ docker compose exec grok-bot node tests/live.test.js
 
 ## The system bridge (AVRONE ↔ Grok Bot)
 
-The two halves of the system conclude into one:
+For the supported combined deployment, run the two repositories on one private Docker Compose network. This avoids the common failure where AVRONE binds to host loopback but a container tries to reach it through `host.docker.internal`.
 
-- **Grok Bot → AVRONE:** the `avrone.squad` tool lets any Grok Bot agent delegate a whole task to AVRONE's own squad (plan → parallel workers with real tools → lead merge; `mode: "deep"` adds adversarial review waves). Set `AVRONE_URL` (e.g. `http://host.docker.internal:8710`) and it's live; AVRONE answers through its plain `/api/chat`.
-- **AVRONE → Grok Bot:** AVRONE agents already ship the `http_request` tool, so they call Grok Bot's API directly — e.g. `http_request POST http://localhost:3000/api/chat {"message": "...", "mode": "squad"}` — reaching this terminal, browser, team and ledger.
-- **MCP, both ways:** `avrone-mcp` exposes AVRONE to any MCP client (`avrone_squad`, `avrone_chat`, `avrone_deep`, `avrone_tools`); Grok Bot handshakes MCP servers at boot from `config/agents.json`.
+- **Grok Bot → AVRONE:** the `avrone.squad` tool delegates a complete task to AVRONE's squad (plan → parallel workers → lead merge; `mode: "deep"` adds adversarial review waves). The integration overlay sets `AVRONE_URL=http://avrone:8710` and the live suite invokes this actual tool.
+- **Network boundary:** AVRONE is published to the host only at `127.0.0.1:8710`; Grok Bot reaches it by Compose service DNS. The AVRONE container uses its unprivileged image, the local runner, and `AVRONE_ALLOW_NETWORK=false`; the overlay does not mount the Docker socket into AVRONE.
+- **AVRONE → Grok Bot:** AVRONE's `http_request` tool can call Grok Bot's API, but the console is bound to `127.0.0.1:3000` on the host by default. A reverse direction from the AVRONE container is not implicitly enabled by that host-only binding; configure an authenticated, private-network route before relying on it.
+- **MCP:** `avrone-mcp` exposes AVRONE to MCP clients (`avrone_squad`, `avrone_chat`, `avrone_deep`, `avrone_tools`); Grok Bot handshakes configured MCP servers at boot.
+
+### Run the combined stack
+
+Keep both repositories as siblings:
+
+```text
+workspace/
+  grok-bot-/
+  Avrone/
+```
+
+From the Grok Bot repository root:
+
+```bash
+./launch.sh
+```
+
+When `../Avrone` exists, the launcher runs AVRONE's offline test suite and uses `docker-compose.integration.yml` to start both services. To fail closed instead of allowing core-only mode when AVRONE is missing, run `LAUNCH_REQUIRE_AVRONE=true ./launch.sh`. Run `./verify.sh` for the bounded boot gate and live suite; with the sibling repository present it requires the bridge test too.
 
 ## The agents' evolution loop
 
@@ -144,11 +163,7 @@ The agents evolve through their own runs — the same sequential process that bu
 
 ## Launch locally (the sequential process)
 
-`./launch.sh` runs the same sequence used to build the system, in order:
-preflight → models → AVRONE (offline suite, doctor, launch) → Grok Bot (full
-profile, boot self-tests) → live tests → the evolution report. Both consoles
-end up live: AVRONE on `:8710`, Grok Bot on `:3000`, with `EVOLVE.md` in
-`./data`.
+`./launch.sh` runs preflight → AVRONE offline test gate (when the sibling checkout exists) → integrated Compose stack → strict boot gate → live tests → evolution report. In integrated mode AVRONE is available to the host at `127.0.0.1:8710` and to Grok Bot as `http://avrone:8710`; the Grok Bot console is available at `http://localhost:3000`.
 
 ### Verify without CI
 

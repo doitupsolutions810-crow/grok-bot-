@@ -11,7 +11,6 @@ import { governor } from "./governor.js";
 import { emit, newRunId, replay, runs } from "./codex.js";
 import { normalizeSubtasks } from "./subtasks.js";
 import { safeToolTraceText } from "./tool-trace.js";
-import { safeToolTraceText } from "./tool-trace.js";
 export { normalizeSubtasks } from "./subtasks.js";
 
 const SQUAD_N = () => Math.max(1, Number(process.env.GROK_SQUAD_N) || 4);

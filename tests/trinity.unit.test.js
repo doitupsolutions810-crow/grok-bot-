@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeSubtasks } from "../src/agents/trinity.js";
+import { normalizeSubtasks } from "../src/agents/subtasks.js";
 
 test("configured squad size fills a missing parallel lane", () => {
   const tasks = normalizeSubtasks('["Inspect the Node runtime"]', {

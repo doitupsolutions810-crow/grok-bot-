@@ -66,3 +66,19 @@ jobs:
             l="${l//%/%25}"
             echo "::error::${l:0:220}"
           done
+
+      - name: Capture integrated-stack diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          docker compose ps -a > diagnostics/compose-ps.txt 2>&1 || true
+          docker compose logs --no-color --tail 500 > diagnostics/compose.log 2>&1 || true
+          docker compose config > diagnostics/compose-config.yml 2>&1 || true
+          if [ -f status.json ]; then cp status.json diagnostics/status.json; fi
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: grok-bot-live-diagnostics-${{ github.run_id }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7

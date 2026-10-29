@@ -9,7 +9,7 @@ function frame(type, data = {}, payload = Buffer.alloc(0)) {
   return Buffer.concat([Buffer.from(JSON.stringify(header) + "\n"), payload]);
 }
 
-async function withFakePiper(handler, run, { infoData = { tts: [{ name: "piper" }] } = {} } = {}) {
+async function withFakePiper(handler, run, { infoData = { tts: [{ name: "piper" }] } } = {}) {
   const received = [];
   const server = createServer(socket => {
     let buffered = Buffer.alloc(0);

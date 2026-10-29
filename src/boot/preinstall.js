@@ -1,15 +1,14 @@
 import Docker from "dockerode";
+import { resolveRequiredModels } from "../llm/model-chain.js";
 
 const REQUIRED_IMAGES = [
   "ollama/ollama:latest",
   "mcr.microsoft.com/playwright:v1.64.1-jammy",
   "ubuntu:24.04"
 ];
-// Env-driven model set: MODELS_REQUIRED drives both preinstall and teammate
-// validation, so CI (qwen2.5:3b) and prod (your GPU models) diverge cleanly.
-const REQUIRED_MODELS = (process.env.MODELS_REQUIRED || `${process.env.LLM_MODEL || "llama3.1:8b"},nomic-embed-text`)
-  .split(",").map(s => s.trim()).filter(Boolean);
-if (process.env.ENABLE_VISION === "true") REQUIRED_MODELS.push("llava:7b");
+// The same chain drives inference and provisioning, so no configured fallback
+// can remain missing after the strict boot gate passes.
+const REQUIRED_MODELS = resolveRequiredModels();
 
 // A slow first model pull (qwen2.5:3b is ~1.9 GB) must not race the LLM
 // self-test — the boot waits until Ollama genuinely lists every model.

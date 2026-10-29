@@ -187,6 +187,10 @@ async function saveReport() {
       "Observed tool calls: " + ((f.tools || []).join(", ") || "none recorded"),
       "Tool-result receipts: " + (f.toolResultReceipts ?? 0) +
         " (marked ok " + (f.successfulToolResults ?? 0) + ", marked failed " + (f.failedToolResults ?? 0) + ")",
+      ...((f.toolReceipts || []).slice(-8).flatMap(t => [
+        "- Tool output: " + t.tool + " (ok=" + t.ok + ")",
+        redact(t.output || "(no safe textual output recorded)", 1000)
+      ])),
       "",
       f.ok ? redact(f.answer || "(no answer text)", 2400) : "Error: " + redact(f.error || "unknown", 500), ""]),
     "### S-mode lead conclusion", "", redact(snapshot.grokSquad?.answer || "No lead answer returned.", 3000),
@@ -269,7 +273,11 @@ async function main() {
         tools: [...new Set(events.filter(t => t.kind === "tool.call" && t.agent === agent).map(t => String(t.tool || "unknown")))],
         toolResultReceipts: events.filter(t => t.kind === "tool.result" && t.agent === agent).length,
         successfulToolResults: events.filter(t => t.kind === "tool.result" && t.agent === agent && t.ok === true).length,
-        failedToolResults: events.filter(t => t.kind === "tool.result" && t.agent === agent && t.ok === false).length
+        failedToolResults: events.filter(t => t.kind === "tool.result" && t.agent === agent && t.ok === false).length,
+        toolReceipts: events.filter(t => t.kind === "tool.result" && t.agent === agent).slice(-12).map(t => ({
+          tool: String(t.tool || "unknown"), ok: typeof t.ok === "boolean" ? t.ok : null,
+          output: redact(t.output_excerpt || t.output || t.error_excerpt || "", 1000)
+        }))
       };
     });
     const overlappingPairs = countOverlappingPairs(intervalsFor(events));
@@ -325,7 +333,7 @@ async function main() {
             kind: e.kind, agent: e.agent || null, tool: e.data?.tool || null,
             ok: typeof e.data?.ok === "boolean" ? e.data.ok : null,
             resultExcerpt: e.kind === "agent.done" ? redact(e.data?.result || "", 1000) :
-              e.kind === "tool.result" ? redact(e.data?.output || e.data?.result || "", 1200) : null,
+              e.kind === "tool.result" ? redact(e.data?.output_excerpt || e.data?.output || e.data?.result || "", 1200) : null,
             message: e.kind === "error" ? redact(e.data?.message || "", 400) : null
           })),
         bridge: {

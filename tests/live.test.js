@@ -96,6 +96,33 @@ const results = [
   })
 ];
 
+if (process.env.AVRONE_URL) {
+  results.push(await test("AVRONE bridge: private-network reachability and real chat", async () => {
+    const base = process.env.AVRONE_URL.replace(/\/$/, "");
+    const statusResponse = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(10000) });
+    if (!statusResponse.ok) throw new Error(`status HTTP ${statusResponse.status}`);
+    const status = await statusResponse.json();
+    if (!status || typeof status !== "object" || !status.runner || !status.provider) {
+      throw new Error("AVRONE status response missing runner/provider fields");
+    }
+    const chatResponse = await fetch(`${base}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "chat", message: "Reply with exactly AVRONE_BRIDGE_OK." }),
+      signal: AbortSignal.timeout(120000)
+    });
+    if (!chatResponse.ok) throw new Error(`chat HTTP ${chatResponse.status}: ${(await chatResponse.text()).slice(0, 240)}`);
+    const payload = await chatResponse.json();
+    const answer = payload.answer || payload.response || payload.content || "";
+    if (typeof answer !== "string" || answer.trim().length === 0) {
+      throw new Error("AVRONE chat returned no textual answer");
+    }
+    return `reachable at ${base}; runner=${status.runner}; real chat returned ${answer.length} chars`;
+  }));
+} else {
+  console.log("SKIP AVRONE bridge live test — AVRONE_URL is not configured");
+}
+
 const passed = results.filter(Boolean).length;
 console.log(`${passed}/${results.length} live tests passed`);
 process.exit(passed === results.length ? 0 : 1);

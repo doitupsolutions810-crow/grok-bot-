@@ -18,6 +18,7 @@ services:
       AVRONE_RUNNER: local
       AVRONE_ALLOW_NETWORK: "false"
       AVRONE_AGENTS_CAN_SHELL: "true"
+      AVRONE_GROKBOT_URL: http://grok-bot:3000
       AVRONE_WORKSPACE: /srv/workspace
       AVRONE_DATA_DIR: /srv/data
       HOME: /home/avrone

@@ -1,7 +1,8 @@
 import { nanoid } from "nanoid";
 import Database from "better-sqlite3";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/auth.db");
+const db = new Database(dataFile("auth.db"));
 db.exec("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, created TEXT)");
 const sessions = new Set(db.prepare("SELECT token FROM sessions").all().map(r => r.token));
 

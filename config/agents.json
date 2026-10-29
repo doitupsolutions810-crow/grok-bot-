@@ -52,7 +52,7 @@
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/data"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${GROK_MCP_DATA_DIR}"]
     }
   }
 }

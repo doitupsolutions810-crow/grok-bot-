@@ -1,8 +1,9 @@
 import cron from "node-cron";
 import { LLM } from "../llm/provider.js";
 import Database from "better-sqlite3";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/tasks.db");
+const db = new Database(dataFile("tasks.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY, name TEXT, cron TEXT, agent TEXT, prompt TEXT,
   last_run TEXT, last_result TEXT

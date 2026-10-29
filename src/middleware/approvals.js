@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/approvals.db");
+const db = new Database(dataFile("approvals.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS approvals (
   id INTEGER PRIMARY KEY, ts TEXT, agent TEXT, tool TEXT, args TEXT, status TEXT DEFAULT 'pending'
 )`);

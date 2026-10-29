@@ -5,8 +5,9 @@
 import Database from "better-sqlite3";
 import { chromium } from "playwright";
 import { readFileSync, readdirSync } from "node:fs";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/skills.db");
+const db = new Database(dataFile("skills.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS skills (
   id INTEGER PRIMARY KEY, name TEXT UNIQUE, description TEXT, steps TEXT, created TEXT
 )`);

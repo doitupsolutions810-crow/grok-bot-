@@ -15,7 +15,13 @@ if (process.env.ENABLE_VISION === "true") REQUIRED_MODELS.push("llava:7b");
 // self-test — the boot waits until Ollama genuinely lists every model.
 const MODEL_PULL_TIMEOUT_MS = 15 * 60_000;
 
-export async function preinstall(docker, { log = console.log } = {}) {
+export async function preinstall(docker, { log = console.log, native = false } = {}) {
+  if (native) {
+    // Native mode: no images or sidecars. Only the models must exist.
+    const base = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+    for (const model of REQUIRED_MODELS) await pullModel(base, model, log);
+    return true;
+  }
   // 1. Pull required images — SKIP any image already present locally, so a
   //    flaky registry round-trip can never block a boot that has what it needs.
   for (const image of REQUIRED_IMAGES) {
@@ -60,7 +66,9 @@ function pullImage(docker, image, log) {
 
 async function modelPresent(ollama, model) {
   const tags = await fetch(`${ollama}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-  return !!tags.models?.some(m => m.name === model);
+  // Ollama lists untagged pulls as "<name>:latest", so treat the two as equal.
+  const want = model.includes(":") ? model : `${model}:latest`;
+  return !!tags.models?.some(m => m.name === model || m.name === want);
 }
 
 async function pullModel(ollama, model, log) {

@@ -7,8 +7,9 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { chatRoute } from "../llm/router.js";
+import { dataFile } from "../paths.js";
 
-const db = new Database("/app/data/traces.db");
+const db = new Database(dataFile("traces.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS tool_calls (
   id INTEGER PRIMARY KEY, ts TEXT, agent TEXT, tool TEXT, args TEXT,
   duration_ms INTEGER, ok INTEGER, error TEXT, prev_hash TEXT, hash TEXT

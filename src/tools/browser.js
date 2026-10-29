@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { isNative, nativeProfileDir } from "../native/index.js";
 
 // Connects to the shared-computer browser service over CDP. One persistent
 // profile (browser_profile volume) — logins and cookies survive restarts and
@@ -33,6 +34,19 @@ export const browserTool = {
     required: ["url"]
   },
   async run({ url, action = "read", selector, text }) {
+    if (isNative()) {
+      // Local persistent Chromium (logins/cookies survive in the profile dir).
+      const ctx = await chromium.launchPersistentContext(nativeProfileDir(), { headless: true, args: ["--no-sandbox"] });
+      try {
+        const page = ctx.pages()[0] || (await ctx.newPage());
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+        if (action === "click" && selector) { await page.click(selector); await page.waitForTimeout(500); }
+        if (action === "type" && selector) { await page.fill(selector, text || ""); }
+        const title = await page.title();
+        const content = await page.evaluate(() => document.body.innerText);
+        return { title, url: page.url(), content: content.slice(0, 12_000) };
+      } finally { await ctx.close(); }
+    }
     const browser = await connectCDP();
     try {
       const ctx = browser.contexts()[0] || (await browser.newContext());

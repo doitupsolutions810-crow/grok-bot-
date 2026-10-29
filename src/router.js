@@ -17,6 +17,7 @@ import {
 } from "./observability/traces.js";
 import { transcribe, speak } from "./voice/voice.js";
 import { visionTool } from "./tools/vision.js";
+import { outputDir } from "./paths.js";
 
 export function makeRouter({ tools, docker }) {
   const r = Router();
@@ -199,7 +200,7 @@ export function makeRouter({ tools, docker }) {
   r.post("/tasks", (req, res) => res.json({ id: addTask(req.body) }));
   r.post("/tasks/:id/run", async (req, res) => { await runTask(+req.params.id); res.json({ ok: true }); });
   r.get("/images/:file", (req, res) =>
-    res.type("image/png").send(readFileSync(`/output/${req.params.file}`)));
+    res.type("image/png").send(readFileSync(`${outputDir()}/${req.params.file}`)));
 
   return r;
 }

@@ -112,4 +112,5 @@ export const governor = {
 
 // Lazily resolved so a missing statfs (macOS, some containers) never crashes boot.
 import { statfsSync } from "node:fs";
-function require_statfs() { return statfsSync(process.env.DATA_DIR || "/app/data"); }
+import { dataDir } from "../paths.js";
+function require_statfs() { return statfsSync(dataDir()); }

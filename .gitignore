@@ -5,3 +5,5 @@ models/
 voices/
 tests/status.json
 *.log
+.env.native
+data/

@@ -120,7 +120,7 @@ async function saveReport() {
     ...findings.flatMap(f => ["### " + f.agent + " — " + (f.ok ? "finding captured" : "worker failure"), "",
       "Task: " + redact(f.task || "not recorded", 600),
       "Observed tool calls: " + ((f.tools || []).join(", ") || "none recorded"),
-      "Successful tool results: " + (f.successfulToolResults ?? 0),
+      "Tool-result receipts: " + (f.toolResultReceipts ?? 0),
       "",
       f.ok ? redact(f.answer || "(no answer text)", 2400) : "Error: " + redact(f.error || "unknown", 500), ""]),
     "### S-mode lead conclusion", "", redact(snapshot.grokSquad?.answer || "No lead answer returned.", 3000),
@@ -197,7 +197,7 @@ async function main() {
         agent, ok: e.ok === true, task: redact(e.task || "", 600),
         answer: redact(e.answer || "", 2400), error: redact(e.error || "", 500), answerChars: e.answer_chars || 0,
         tools: [...new Set(events.filter(t => t.kind === "tool.call" && t.agent === agent).map(t => String(t.tool || "unknown")))],
-        successfulToolResults: events.filter(t => t.kind === "tool.result" && t.agent === agent && t.ok === true).length
+        toolResultReceipts: events.filter(t => t.kind === "tool.result" && t.agent === agent).length
       };
     });
     const overlappingPairs = countOverlappingPairs(intervalsFor(events));

@@ -11,7 +11,8 @@ const marker = "SQUAD_OBSERVATION_" + Date.now().toString(36) + "_" + randomUUID
 const failures = [];
 const snapshot = { createdAt: new Date().toISOString(), marker, expectedWorkers: EXPECTED_WORKERS,
   grokBot: null, governor: null, containers: null, avrone: null, grokSquad: null,
-  grokToAvrone: null, avroneToGrok: null, bridgeReceipts: [], conclusions: [] };
+  grokToAvrone: null, avroneToGrok: null, avroneSquadTrace: null, avroneReverseTrace: null,
+  bridgeReceipts: [], conclusions: [] };
 
 function redact(value, cap = 3000) {
   return String(value ?? "")
@@ -117,9 +118,22 @@ async function saveReport() {
     "- Overlapping worker interval pairs: " + (snapshot.grokSquad?.overlappingPairs ?? 0),
     "- Run ID: " + (snapshot.grokSquad?.runId || "not found"), "",
     ...findings.flatMap(f => ["### " + f.agent + " — " + (f.ok ? "finding captured" : "worker failure"), "",
-      "Task: " + redact(f.task || "not recorded", 600), "",
+      "Task: " + redact(f.task || "not recorded", 600),
+      "Observed tool calls: " + ((f.tools || []).join(", ") || "none recorded"),
+      "Successful tool results: " + (f.successfulToolResults ?? 0),
+      "",
       f.ok ? redact(f.answer || "(no answer text)", 2400) : "Error: " + redact(f.error || "unknown", 500), ""]),
     "### S-mode lead conclusion", "", redact(snapshot.grokSquad?.answer || "No lead answer returned.", 3000),
+    "", "## AVRONE agent communication", "",
+    "Forward bridge run ID: " + (snapshot.avroneSquadTrace?.runId || "unavailable"),
+    "AVRONE CodeX events: " + (snapshot.avroneSquadTrace?.eventCount ?? "unavailable"),
+    "AVRONE cross-agent bridge posts: " + (snapshot.avroneSquadTrace?.bridge?.count ?? "unavailable"),
+    ...((snapshot.avroneSquadTrace?.bridge?.posts || []).slice(-12).flatMap(p => [
+      "### " + p.agent + (p.role ? " (" + p.role + ")" : "") + " — " + p.kind,
+      "", redact(p.text, 1200), ""
+    ])),
+    "Reverse bridge run ID: " + (snapshot.avroneReverseTrace?.runId || "unavailable"),
+    "Reverse trace events: " + (snapshot.avroneReverseTrace?.eventCount ?? "unavailable"),
     "", "## Bridge conclusions", "",
     "- Grok Bot → AVRONE: " + (snapshot.grokToAvrone?.ok ? "tool returned a nonempty squad answer" :
       snapshot.grokToAvrone?.configured ? "failed or unverified" : "not configured"),
@@ -177,10 +191,15 @@ async function main() {
     const run = runsProbe.ok ? findMatchingRun(runsProbe.body, marker) : null;
     const events = run?.events || [];
     const spawned = events.filter(e => e.kind === "agent.spawn");
-    const findings = events.filter(e => e.kind === "worker.finding").map(e => ({
-      agent: e.agent || "unknown", ok: e.ok === true, task: redact(e.task || "", 600),
-      answer: redact(e.answer || "", 2400), error: redact(e.error || "", 500), answerChars: e.answer_chars || 0
-    }));
+    const findings = events.filter(e => e.kind === "worker.finding").map(e => {
+      const agent = e.agent || "unknown";
+      return {
+        agent, ok: e.ok === true, task: redact(e.task || "", 600),
+        answer: redact(e.answer || "", 2400), error: redact(e.error || "", 500), answerChars: e.answer_chars || 0,
+        tools: [...new Set(events.filter(t => t.kind === "tool.call" && t.agent === agent).map(t => String(t.tool || "unknown")))],
+        successfulToolResults: events.filter(t => t.kind === "tool.result" && t.agent === agent && t.ok === true).length
+      };
+    });
     const overlappingPairs = countOverlappingPairs(intervalsFor(events));
     snapshot.grokSquad = { ok: true, httpStatus: squad.httpStatus, runId: run?.runId || null,
       spawned: spawned.length, successfulFindings: findings.filter(f => f.ok).length, overlappingPairs,
@@ -213,6 +232,35 @@ async function main() {
       : { configured: true, ok: false, error: forward.error };
     if (!snapshot.grokToAvrone.ok) failures.push("Grok Bot → AVRONE did not return a nonempty successful squad answer.");
 
+    if (forward.ok && forward.body?.runId) {
+      const avrRunId = encodeURIComponent(forward.body.runId);
+      const traceProbe = await probe("AVRONE squad CodeX replay", AVRONE + "/api/runs/" + avrRunId);
+      const traceEvents = traceProbe.ok && Array.isArray(traceProbe.body) ? traceProbe.body : [];
+      const bridgeProbe = await probe("AVRONE squad learning bridge", AVRONE + "/api/runs/" + avrRunId + "/bridge");
+      const posts = bridgeProbe.ok && Array.isArray(bridgeProbe.body?.posts) ? bridgeProbe.body.posts : [];
+      snapshot.avroneSquadTrace = {
+        runId: forward.body.runId,
+        eventCount: traceEvents.length,
+        events: traceEvents.filter(e => ["agent.spawn", "agent.done", "tool.call", "tool.result", "bridge.post", "error", "run.done"].includes(e.kind))
+          .slice(-80).map(e => ({
+            kind: e.kind, agent: e.agent || null, tool: e.data?.tool || null,
+            ok: typeof e.data?.ok === "boolean" ? e.data.ok : null,
+            resultExcerpt: e.kind === "agent.done" ? redact(e.data?.result || "", 1000) : null,
+            message: e.kind === "error" ? redact(e.data?.message || "", 400) : null
+          })),
+        bridge: {
+          count: Number.isFinite(bridgeProbe.body?.count) ? bridgeProbe.body.count : posts.length,
+          posts: posts.slice(-16).map(p => ({
+            agent: redact(p.agent || "unknown", 80), role: redact(p.role || "", 60),
+            kind: p.kind || "finding", refs: Array.isArray(p.refs) ? p.refs.slice(0, 10) : [],
+            originNode: redact(p.origin_node || "", 80), text: redact(p.text || "", 1200)
+          }))
+        }
+      };
+    } else {
+      snapshot.avroneSquadTrace = { error: "The forward bridge did not return an AVRONE run ID; worker-level AVRONE trace unavailable." };
+    }
+
     const toolsProbe = await probe("AVRONE tool inventory", AVRONE + "/api/tools");
     const toolEntries = toolsProbe.ok && Array.isArray(toolsProbe.body) ? toolsProbe.body : [];
     const grokToolPresent = toolEntries.some(t => t?.name === "grokbot.ask" || t?.id === "grokbot.ask");
@@ -239,6 +287,16 @@ async function main() {
           e.data?.ok === true);
         if (found) {
           receipt = { ...found, runId: id };
+          snapshot.avroneReverseTrace = {
+            runId: id,
+            eventCount: detail.body.length,
+            events: detail.body.filter(e => ["tool.call", "tool.result", "agent.spawn", "agent.done", "grokbot.bridge", "error", "run.done"].includes(e.kind))
+              .slice(-60).map(e => ({
+                kind: e.kind, agent: e.agent || null, tool: e.data?.tool || null,
+                ok: typeof e.data?.ok === "boolean" ? e.data.ok : null,
+                excerpt: e.kind === "agent.done" ? redact(e.data?.result || "", 800) : null
+              }))
+          };
           break;
         }
       }
@@ -265,8 +323,11 @@ async function main() {
   if (snapshot.grokSquad) snapshot.conclusions.push("Grok Bot trace recorded " + snapshot.grokSquad.spawned +
     " workers, " + snapshot.grokSquad.successfulFindings + " successful findings, and " +
     snapshot.grokSquad.overlappingPairs + " overlapping worker interval pairs.");
-  if (snapshot.grokToAvrone?.ok) snapshot.conclusions.push("Grok Bot → AVRONE returned a real avrone.squad answer.");
-  if (snapshot.avroneToGrok?.ok) snapshot.conclusions.push("AVRONE → Grok Bot produced a successful grokbot.bridge CodeX receipt.");
+  if (snapshot.grokToAvrone?.ok) snapshot.conclusions.push("Grok Bot → AVRONE returned a real avrone.squad answer with " +
+    (snapshot.avroneSquadTrace?.eventCount ?? 0) + " replayable AVRONE events and " +
+    (snapshot.avroneSquadTrace?.bridge?.count ?? 0) + " inter-agent bridge posts.");
+  if (snapshot.avroneToGrok?.ok) snapshot.conclusions.push("AVRONE → Grok Bot produced a successful grokbot.bridge CodeX receipt in run " +
+    (snapshot.avroneReverseTrace?.runId || "unknown") + ".");
   if (failures.length) snapshot.conclusions.push("Verification remains partial: " + failures.length + " gap(s) require attention; no green status is claimed.");
   else snapshot.conclusions.push("Both bridge directions and dual-parallel S-mode produced runtime evidence; proposed evolution can be based on this observation.");
 

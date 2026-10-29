@@ -277,9 +277,21 @@ async function main() {
         }))
       };
     });
+    const terminalReceipts = Object.fromEntries(["worker-1", "worker-2"].map(agent => [
+      agent, events.filter(e => e.kind === "tool.result" && e.agent === agent &&
+        e.tool === "terminal" && e.ok === true).length
+    ]));
+    // Count only observed HTTP response lines returned by worker-2's real terminal
+    // tool receipt, not model-authored text or the observer's own API requests.
+    const worker2TerminalText = events
+      .filter(e => e.kind === "tool.result" && e.agent === "worker-2" && e.tool === "terminal")
+      .map(e => String(e.output_excerpt || e.output || ""))
+      .join("\n");
+    const sandboxHttp200Count = [...worker2TerminalText.matchAll(/HTTP\/1\.[01]\s+200\b/g)].length;
     const overlappingPairs = countOverlappingPairs(intervalsFor(events));
     snapshot.grokSquad = { ok: true, httpStatus: squad.httpStatus, runId: run?.runId || null,
       spawned: spawned.length, successfulFindings: findings.filter(f => f.ok).length, overlappingPairs,
+      terminalReceipts, sandboxHttp200Count,
       notes: Array.isArray(squad.body?.notes) ? squad.body.notes.map(n => redact(n, 300)) : [],
       findings, answer: redact(squad.body?.answer || "", 3000) };
     if (!run) failures.push("Completed S-mode run could not be matched to CodeX evidence.");
@@ -291,6 +303,12 @@ async function main() {
       if (!finding?.tools?.includes("terminal")) {
         failures.push(requiredAgent + " did not invoke the real terminal tool; command-level environment observation is unverified.");
       }
+      if ((terminalReceipts[requiredAgent] || 0) < 1) {
+        failures.push(requiredAgent + " has no successful terminal tool-result receipt.");
+      }
+    }
+    if (sandboxHttp200Count < 3) {
+      failures.push("Worker 2 did not observe HTTP 200 for all three internal endpoints from the integrated terminal sandbox.");
     }
     if (overlappingPairs < 1) failures.push("No overlapping worker intervals were evidenced; parallel execution is unverified.");
   }
@@ -342,6 +360,12 @@ async function main() {
           }))
         }
       };
+      if (!traceEvents.some(e => e.kind === "run.done")) {
+        failures.push("Grok Bot → AVRONE returned a run ID but AVRONE replay has no run.done completion receipt.");
+      }
+      if (traceEvents.filter(e => e.kind === "agent.spawn").length < EXPECTED_WORKERS) {
+        failures.push("Grok Bot → AVRONE replay does not evidence the configured number of spawned AVRONE agents.");
+      }
       if ((snapshot.avroneSquadTrace.bridge?.count ?? 0) < EXPECTED_WORKERS) {
         failures.push("AVRONE squad persisted fewer than " + EXPECTED_WORKERS +
           " inter-agent finding posts; cross-agent communication is not fully evidenced.");
@@ -395,11 +419,13 @@ async function main() {
     snapshot.bridgeReceipts = receipt ? [{ runId: receipt.runId || null, kind: receipt.kind, ok: true,
       agent: receipt.data?.agent || receipt.agent || "grok-researcher",
       answerChars: receipt.data?.answer_chars || receipt.answer_chars || null }] : [];
-    snapshot.avroneToGrok = { configured: true, ok: !!receipt, answer: reverseAnswer, receipt: snapshot.bridgeReceipts[0] || null };
+    const reverseMarkerConfirmed = /AVRONE_TO_GROKBOT_BRIDGE_OK/.test(reverseAnswer);
+    snapshot.avroneToGrok = { configured: true, ok: !!receipt && reverseMarkerConfirmed,
+      answer: reverseAnswer, receipt: snapshot.bridgeReceipts[0] || null };
     if (!reverse.ok) failures.push("AVRONE → Grok Bot chat request failed.");
-    if (reverse.ok && !receipt) failures.push("AVRONE → Grok Bot had no successful grokbot.bridge CodeX receipt.");
-    if (reverse.ok && !/AVRONE_TO_GROKBOT_BRIDGE_OK/.test(reverseAnswer)) {
-      failures.push("AVRONE → Grok Bot did not echo the requested marker; the tool trace needs review.");
+    if (reverse.ok && !receipt) failures.push("AVRONE → Grok Bot had no successful correlated grokbot.bridge CodeX receipt.");
+    if (reverse.ok && !reverseMarkerConfirmed) {
+      failures.push("AVRONE → Grok Bot did not echo the requested marker; the bridge invocation was not confirmed end-to-end.");
     }
   }
 

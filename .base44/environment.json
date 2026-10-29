@@ -1,0 +1,17 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/api/health",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "X_API_BEARER",
+      "description": "Optional: X/Twitter API bearer token for the @mention listener and x.search/x.post tools (developer.x.com). The stack boots and runs without it.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "XAI_API_KEY",
+      "description": "Optional: xAI API key for the Grok bridge. The stack runs on the local Ollama models without it.",
+      "requiredAtBoot": false
+    }
+  ]
+}

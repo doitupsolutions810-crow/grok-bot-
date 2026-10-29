@@ -5,3 +5,8 @@ models/
 voices/
 tests/status.json
 *.log
+# Python runtime artifacts (AVRONE imports the avrone/ and plugins/ packages)
+__pycache__/
+*.pyc
+.venv/
+workspace/

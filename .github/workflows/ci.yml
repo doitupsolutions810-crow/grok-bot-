@@ -5,6 +5,44 @@ on:
   workflow_dispatch:
 
 jobs:
+  source-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RUNS_DIR: /tmp/grok-bot-runs
+      DATA_DIR: /tmp/grok-bot-data
+      GROK_SQUAD_N: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Parse changed JavaScript
+        run: |
+          node --check src/agents/subtasks.js
+          node --check src/agents/trinity.js
+          node --check src/agents/runtime.js
+          node --check scripts/evolve.js
+          node --check scripts/squad-observe.js
+          node --check tests/trinity.unit.test.js
+          node --check tests/live.test.js
+      - name: Test exact S-mode lane contract (no package install needed)
+        run: node --test tests/trinity.unit.test.js
+      - name: Preserve source-check evidence
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          node --version > diagnostics/node-version.txt 2>&1 || true
+          node --test tests/trinity.unit.test.js > diagnostics/squad-unit-tests.txt 2>&1 || true
+          git status --short > diagnostics/git-status.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grok-bot-source-evidence-${{ github.run_id }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
   live:
     runs-on: ubuntu-24.04
     timeout-minutes: 90

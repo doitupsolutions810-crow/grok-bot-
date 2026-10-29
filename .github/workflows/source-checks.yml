@@ -28,6 +28,9 @@ jobs:
           node scripts/check-inline-js.js
           node --check scripts/check-inline-js.js
           node --check src/llm/model-chain.js
+          node --check src/llm/router.js
+          node --check src/boot/preinstall.js
+          node --check src/server.js
           node --check tests/model-chain.test.js
           node --check tests/compose-env.test.js
           node --check src/tools/avrone.js

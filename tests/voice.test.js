@@ -9,7 +9,7 @@ function frame(type, data = {}, payload = Buffer.alloc(0)) {
   return Buffer.concat([Buffer.from(JSON.stringify(header) + "\n"), payload]);
 }
 
-async function withFakePiper(handler, run) {
+async function withFakePiper(handler, run, { infoData = { tts: [{ name: "piper" }] } = {} } = {}) {
   const received = [];
   const server = createServer(socket => {
     let buffered = Buffer.alloc(0);
@@ -25,7 +25,7 @@ async function withFakePiper(handler, run) {
           received.push(request);
           if (request.type === "describe") {
             // Wyoming requires an info reply before the synthesis request.
-            socket.write(frame("info", { tts: [{ name: "piper" }] }));
+            socket.write(frame("info", infoData));
           } else {
             handler(socket, request);
           }
@@ -70,6 +70,17 @@ test("Wyoming synthesis creates a valid WAV from audio-start and audio-chunk eve
     assert.equal(wav.readUInt16LE(22), 1);
     assert.equal(wav.readUInt32LE(40), pcm.length);
     assert.deepEqual(wav.subarray(44), pcm);
+  }, {
+    // Piper can advertise a large voice catalog in the initial info event.
+    infoData: {
+      tts: [{
+        name: "piper",
+        voices: Array.from({ length: 400 }, (_, i) => ({
+          name: `voice-${i}`,
+          description: "voice catalog metadata ".repeat(4)
+        }))
+      }]
+    }
   });
 });
 

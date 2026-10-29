@@ -94,7 +94,7 @@ async function ensureModel(model, log) {
 }
 
 async function ensureSandbox(docker, log) {
-  const name = "grok-sandbox";
+  const name = String(process.env.GROK_SANDBOX_CONTAINER || "grok-sandbox").trim() || "grok-sandbox";
   const desiredNetwork = String(process.env.GROK_SANDBOX_NETWORK || "").trim();
   const containers = await docker.listContainers({ all: true });
   let existing = containers.find(c => c.Names.includes("/" + name));

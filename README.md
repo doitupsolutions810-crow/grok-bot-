@@ -58,6 +58,7 @@ To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 12
 - `GET /ledger`, `POST /feedback` — trace ledger + run feedback
 - `POST /x/trigger` — webhook variant of the @mention poller
 - Plus: `/tools/:name/invoke`, `/rag/*`, `/vision`, `/voice/*`, `/tasks`, `/images/:file`, `/docker/containers`
+- Full-profile TTS uses the private `PIPER_URL=tcp://piper:10200` Wyoming service and returns an actual WAV response from `POST /api/voice/tts`; assistant answers have a **Listen** control in the console. `GET /api/voice/tts?text=...` remains available for existing clients. The sidecar caches its voice model in the persistent `piper_data` volume.
 
 ## Configuration
 

@@ -131,7 +131,7 @@ For the supported combined deployment, run the two repositories on one private D
 
 - **Grok Bot → AVRONE:** the `avrone.squad` tool delegates a complete task to AVRONE's squad (plan → parallel workers → lead merge; `mode: "deep"` adds adversarial review waves). The integration overlay sets `AVRONE_URL=http://avrone:8710` and the live suite invokes this actual tool.
 - **Network boundary:** AVRONE is published to the host only at `127.0.0.1:8710`; Grok Bot reaches it by Compose service DNS. The AVRONE container uses its unprivileged image, the local runner, and `AVRONE_ALLOW_NETWORK=false`; the overlay does not mount the Docker socket into AVRONE.
-- **AVRONE → Grok Bot:** AVRONE's `http_request` tool can call Grok Bot's API, but the console is bound to `127.0.0.1:3000` on the host by default. A reverse direction from the AVRONE container is not implicitly enabled by that host-only binding; configure an authenticated, private-network route before relying on it.
+- **AVRONE → Grok Bot:** the dedicated `grokbot.ask` tool calls only Grok Bot's low-privilege `grok-researcher` agent at the configured `AVRONE_GROKBOT_URL=http://grok-bot:3000` origin. It accepts no caller-supplied URL, blocks redirects, caps prompt size, records a bridge receipt, and cannot recursively delegate to AVRONE. It works with generic AVRONE network access still disabled; the Compose network provides the route.
 - **MCP:** `avrone-mcp` exposes AVRONE to MCP clients (`avrone_squad`, `avrone_chat`, `avrone_deep`, `avrone_tools`); Grok Bot handshakes configured MCP servers at boot.
 
 ### Run the combined stack

@@ -1,4 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import os from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -10,7 +12,7 @@ const EXPECTED_WORKERS = Math.max(2, Number(process.env.GROK_SQUAD_N) || 2);
 const marker = "SQUAD_OBSERVATION_" + Date.now().toString(36) + "_" + randomUUID().slice(0, 8);
 const failures = [];
 const snapshot = { createdAt: new Date().toISOString(), marker, expectedWorkers: EXPECTED_WORKERS,
-  grokBot: null, governor: null, containers: null, avrone: null, grokSquad: null,
+  nodeRuntime: null, grokBot: null, governor: null, containers: null, avrone: null, grokSquad: null,
   grokToAvrone: { configured: !!AVRONE, ok: false, error: AVRONE ? "Forward bridge not attempted yet." : "AVRONE_URL is not configured." },
   avroneToGrok: { configured: !!AVRONE, ok: false, error: AVRONE ? "Reverse bridge not attempted yet." : "AVRONE_URL is not configured." },
   avroneSquadTrace: null, avroneReverseTrace: null, bridgeReceipts: [], conclusions: [] };
@@ -22,6 +24,54 @@ function redact(value, cap = 3000) {
     .replace(/(api[_-]?key|token|password|secret|authorization|cookie|private[_ -]?key)(\s*[:=]\s*)(["']?)[^\s"',;]+/gi, "$1$2[REDACTED]")
     .slice(0, cap);
 }
+
+function runReadOnlyCommand(command, args) {
+  try {
+    const output = execFileSync(command, args, {
+      encoding: "utf8", timeout: 4000, maxBuffer: 8192,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    return { ok: true, output: redact(String(output || "").trim(), 1600) };
+  } catch (error) {
+    const output = [error.stdout, error.stderr, error.message].filter(Boolean).join("\\n");
+    return { ok: false, output: redact(output.trim(), 500) };
+  }
+}
+
+function inspectNodeRuntime() {
+  const mb = value => Math.round(value / (1024 * 1024));
+  return {
+    capturedAt: new Date().toISOString(),
+    process: {
+      version: process.version, platform: process.platform, arch: process.arch,
+      pid: process.pid, uid: typeof process.getuid === "function" ? process.getuid() : null,
+      gid: typeof process.getgid === "function" ? process.getgid() : null,
+      cwd: process.cwd(), uptimeSeconds: Math.round(process.uptime())
+    },
+    os: {
+      hostname: redact(os.hostname(), 120), release: os.release(),
+      platform: os.platform(), arch: os.arch(),
+      availableParallelism: typeof os.availableParallelism === "function"
+        ? os.availableParallelism() : os.cpus().length,
+      loadAverage: os.loadavg().map(n => Number(n.toFixed(2))),
+      totalMemoryMB: mb(os.totalmem()), freeMemoryMB: mb(os.freemem()),
+      uptimeSeconds: Math.round(os.uptime())
+    },
+    dataDirectory: DATA,
+    avroneUrlConfigured: !!AVRONE,
+    commands: {
+      uname: runReadOnlyCommand("uname", ["-a"]),
+      hostname: runReadOnlyCommand("hostname", []),
+      utcTime: runReadOnlyCommand("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"]),
+      nodeVersion: runReadOnlyCommand("node", ["--version"]),
+      pythonVersion: runReadOnlyCommand("python3", ["--version"]),
+      processOne: runReadOnlyCommand("ps", ["-p", "1", "-o", "pid=,comm="]),
+      disk: runReadOnlyCommand("df", ["-h", "/app", "/app/data", "/tmp"]),
+      osRelease: runReadOnlyCommand("cat", ["/etc/os-release"])
+    }
+  };
+}
+
 
 async function requestJson(url, options = {}, timeoutMs = 15000) {
   const response = await fetch(url, { ...options,
@@ -103,6 +153,20 @@ async function saveReport() {
     "- Created: " + snapshot.createdAt,
     "- Run marker: " + marker,
     "- Configured worker count: " + EXPECTED_WORKERS, "",
+    "## Node-container runtime", "",
+    "- Node: " + (snapshot.nodeRuntime?.process?.version || "unavailable") + " (" +
+      (snapshot.nodeRuntime?.process?.platform || "unknown") + "/" + (snapshot.nodeRuntime?.process?.arch || "unknown") + ")",
+    "- Hostname / release: " + (snapshot.nodeRuntime?.os?.hostname || "unknown") + " / " + (snapshot.nodeRuntime?.os?.release || "unknown"),
+    "- PID / UID / GID: " + [snapshot.nodeRuntime?.process?.pid, snapshot.nodeRuntime?.process?.uid, snapshot.nodeRuntime?.process?.gid].map(v => v ?? "unknown").join(" / "),
+    "- Working directory: " + (snapshot.nodeRuntime?.process?.cwd || "unknown"),
+    "- CPU lanes / load: " + (snapshot.nodeRuntime?.os?.availableParallelism ?? "unknown") + " / " + (snapshot.nodeRuntime?.os?.loadAverage || []).join(", "),
+    "- Memory total/free MB: " + (snapshot.nodeRuntime?.os?.totalMemoryMB ?? "unknown") + " / " + (snapshot.nodeRuntime?.os?.freeMemoryMB ?? "unknown"),
+    ...Object.entries(snapshot.nodeRuntime?.commands || {}).flatMap(([name, result]) => [
+      "### " + name + (result.ok ? " — observed" : " — unavailable"), "",
+      "`" + (result.ok ? "output captured" : "command failed") + "`",
+      redact(result.output || "(no output)", 1600), ""
+    ]),
+    "",
     "## Runtime witnesses", "",
     "- Grok Bot API: " + (snapshot.grokBot?.ok ? "reachable" : "unavailable"),
     "- Grok Bot ready: " + (snapshot.grokBot?.summary?.ready ?? "unknown"),
@@ -157,6 +221,7 @@ async function saveReport() {
 }
 
 async function main() {
+  snapshot.nodeRuntime = inspectNodeRuntime();
   const grok = await probe("Grok Bot status", BASE + "/api/status");
   snapshot.grokBot = grok.ok ? { ok: true, httpStatus: grok.httpStatus, summary: safeGrokStatus(grok.body) } : grok;
   if (grok.ok && grok.body?.ready !== true) failures.push("Grok Bot /api/status did not report ready:true.");
@@ -179,7 +244,7 @@ async function main() {
   const prompt = [
     "Read-only dual-parallel runtime observation. Correlation marker: " + marker + ".",
     "Use exactly two independent parallel workers, then a lead synthesis.",
-    "Worker 1: inspect the Node/server runtime and sandbox environment with real, read-only tool calls. Where supported, gather uname -a, hostname, UTC time, node --version, python3 --version, uptime, df -h /workspace, /etc/os-release, process 1, and working directory. Include exact commands and concise outputs.",
+    "Worker 1: independently inspect the assigned terminal sandbox with real, read-only tool calls. Where supported, gather uname -a, hostname, UTC time, node --version, python3 --version, uptime, df -h ., /etc/os-release, process 1, and working directory. Include exact commands and concise outputs. Do not assume the sandbox is the Grok Bot server container; distinguish its host/container identity from the separately collected Node-container runtime snapshot.",
     "Worker 2: inspect service/bridge wiring and health with real tools. Check readiness, agent/tool availability, governor state, and whether AVRONE is reachable at the configured endpoint. Use read-only GET/status probes only.",
     "Never dump the full environment or print secret values, tokens, cookies, credentials, private data, or full config files. For environment variables, report only safe variable names and present/missing. Separate observed facts from inferences and list unavailable probes as gaps.",
     "Lead: compare reports, identify agreements and contradictions, conclude what the node/server/environment actually reveal, and state whether worker execution intervals overlapped. Do not claim a bridge without a concrete response or receipt."
@@ -219,7 +284,7 @@ async function main() {
   if (AVRONE && snapshot.avrone?.ok) {
     const bridgePrompt = [
       "Read-only cross-system S-mode conclusion. Marker: " + marker + ".",
-      "Use your real AVRONE squad to inspect your runner/provider/model/tool inventory and independently assess the Grok Bot telemetry below.",
+      "Use your real AVRONE squad to inspect your runner/provider/model/tool inventory and independently assess the Grok Bot telemetry below. Each parallel worker should execute only read-only probes where supported: uname -a, hostname, date -u, python3 --version, ps -p 1 -o pid=,comm=, df -h /srv/workspace /srv/data, pwd, and ls -ld /srv/workspace /srv/data. Report exact outputs and command failures. Do not dump environment variables or full config files.",
       "Do not reveal secrets or dump environment values. Separate status/tool evidence from assumptions; state inaccessible network paths.",
       "Grok Bot snapshot: ready=" + snapshot.grokBot?.summary?.ready + "; governor=" +
         (snapshot.governor?.body?.state || "unknown") + "; lanes=" +

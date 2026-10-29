@@ -105,19 +105,18 @@ if (process.env.AVRONE_URL) {
     if (!status || typeof status !== "object" || !status.runner || !status.provider) {
       throw new Error("AVRONE status response missing runner/provider fields");
     }
-    const chatResponse = await fetch(`${base}/api/chat`, {
+    const invokeResponse = await fetch(`${BASE}/api/tools/avrone.squad/invoke`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "chat", message: "Reply with exactly AVRONE_BRIDGE_OK." }),
-      signal: AbortSignal.timeout(120000)
+      body: JSON.stringify({ prompt: "Reply with exactly AVRONE_BRIDGE_OK.", mode: "squad" }),
+      signal: AbortSignal.timeout(180000)
     });
-    if (!chatResponse.ok) throw new Error(`chat HTTP ${chatResponse.status}: ${(await chatResponse.text()).slice(0, 240)}`);
-    const payload = await chatResponse.json();
-    const answer = payload.answer || payload.response || payload.content || "";
-    if (typeof answer !== "string" || answer.trim().length === 0) {
-      throw new Error("AVRONE chat returned no textual answer");
+    if (!invokeResponse.ok) throw new Error(`avrone.squad HTTP ${invokeResponse.status}: ${(await invokeResponse.text()).slice(0, 240)}`);
+    const bridge = await invokeResponse.json();
+    if (!bridge.ok || typeof bridge.answer !== "string" || bridge.answer.trim().length === 0) {
+      throw new Error(`avrone.squad returned no successful answer: ${JSON.stringify(bridge).slice(0, 300)}`);
     }
-    return `reachable at ${base}; runner=${status.runner}; real chat returned ${answer.length} chars`;
+    return `reachable at ${base}; runner=${status.runner}; avrone.squad executed (${bridge.answer.length} answer chars)`;
   }));
 } else {
   console.log("SKIP AVRONE bridge live test — AVRONE_URL is not configured");

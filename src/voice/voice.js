@@ -12,7 +12,8 @@ const PIPER_CMD = process.env.PIPER_CMD || "piper";
 const MAX_TEXT_CHARS = 1000;
 const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
-const MAX_HEADER_BYTES = 16 * 1024;
+const MAX_HEADER_BYTES = 1024 * 1024;
+const MAX_EVENT_DATA_BYTES = 1024 * 1024;
 const AUDIO_TIMEOUT_MS = 120_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 
@@ -128,7 +129,7 @@ class WyomingReader {
     if (!header || typeof header.type !== "string") throw new Error("Piper sent an event without a type.");
 
     const dataLength = header.data_length === undefined ? 0 : header.data_length;
-    if (!Number.isSafeInteger(dataLength) || dataLength < 0 || dataLength > 64 * 1024) {
+    if (!Number.isSafeInteger(dataLength) || dataLength < 0 || dataLength > MAX_EVENT_DATA_BYTES) {
       throw new Error("Piper sent an invalid event data length.");
     }
     let extra = {};
@@ -194,6 +195,15 @@ async function synthesizeOnce(text, voice, endpoint, timeoutMs) {
       error.code = "ETIMEDOUT";
       socket.destroy(error);
     });
+
+    // Wyoming services start with describe/info before a request. Piper's
+    // info event can include a long voice catalog, so the header/data caps are
+    // bounded at 1 MiB rather than assuming a small response.
+    socket.write(JSON.stringify({ type: "describe" }) + "\n");
+    const description = await reader.readEvent();
+    if (description.type !== "info") {
+      throw new Error("Piper did not answer the Wyoming describe handshake.");
+    }
 
     socket.write(JSON.stringify({
       type: "synthesize",

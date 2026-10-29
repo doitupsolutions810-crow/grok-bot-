@@ -33,6 +33,11 @@ services:
       OLLAMA_URL: http://ollama:11434
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
       MODELS_REQUIRED: ${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text}
+      MODEL_CHAIN: ${MODEL_CHAIN:-}
+      ENABLE_VISION: ${ENABLE_VISION:-false}
+      X_API_BEARER: ${X_API_BEARER:-}
+      X_ACCOUNT: ${X_ACCOUNT:-grok_bot}
+      X_POLL_SECONDS: ${X_POLL_SECONDS:-60}
       BROWSER_WS: ws://browser:3000
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
       BOOT_STRICT: ${BOOT_STRICT:-true}

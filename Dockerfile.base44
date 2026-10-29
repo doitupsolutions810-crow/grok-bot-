@@ -1,0 +1,21 @@
+# Development image for the Base44 sandbox: runtime + OS tooling ONLY.
+# The repo is bind-mounted at /app by docker-compose.base44.yml and the app runs
+# with node --watch, so edits are visible without rebuilding this image.
+FROM node:22
+
+# docker.io → the `terminal` tool shells out to `docker exec`
+# python3/make/g++ → better-sqlite3 native build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates docker.io python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# MCP servers pre-installed so the boot handshake never depends on the npm
+# registry at runtime (the app's config/agents.json starts it with `npx`).
+RUN npm install -g @modelcontextprotocol/server-filesystem
+
+# The browser tool only connects over CDP to the `browser` service, so the
+# app image never needs its own Chromium download.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PORT=3000
+WORKDIR /app
+EXPOSE 3000

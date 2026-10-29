@@ -1,0 +1,14 @@
+# Shared-computer sidecar: the browser + its pinned CDP client.
+#
+# The official Playwright image ships the browsers but NOT the `playwright`
+# npm module that browser-service/computer.js requires, and installing it at
+# container start made the service too slow to answer the app's boot probe.
+# Nothing from the app is baked in here — computer.js is bind-mounted.
+FROM mcr.microsoft.com/playwright:v1.64.1-jammy
+
+RUN npm install -g playwright@1.64.1 --no-audit --no-fund
+
+# global modules dir, so `require("playwright")` resolves for the service
+ENV NODE_PATH=/usr/lib/node_modules
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV CDP_PORT=9222

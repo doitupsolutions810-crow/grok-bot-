@@ -1,0 +1,138 @@
+# Base44 development stack for Grok Bot.
+#
+# Runs the app FROM THE CLONED SOURCE: the repo is bind-mounted at /app and the
+# server runs under `node --watch`, so edits are live. Sidecars (ollama, the
+# shared browser, the hardened docker socket proxy) are the same ones the repo's
+# own docker-compose.yml uses — infrastructure images only, never app code.
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: on-failure
+    environment:
+      PING: 1
+      INFO: 1
+      CONTAINERS: 1
+      EXEC: 1
+      POST: 1
+      PULL: 1
+      IMAGES: 1
+      ALLOW_RESTARTS: 1
+      NETWORKS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2375/_ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: on-failure
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # The shared computer. Chrome only serves its DevTools endpoint on loopback,
+  # so this service runs in the app container's network namespace and the app
+  # reaches it over CDP at 127.0.0.1:9222 (see browser-service/computer.js).
+  browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    restart: on-failure
+    network_mode: "service:grok-bot"
+    environment:
+      - CDP_PORT=9222
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    volumes:
+      - ./browser-service/computer.js:/app/computer.js:ro
+      - browser_profile:/profile
+    # A persistent profile keeps Chromium's singleton lock from the previous
+    # container; clear it so the shared computer can always relaunch.
+    command:
+      - sh
+      - -ec
+      - rm -f /profile/SingletonLock /profile/SingletonSocket /profile/SingletonCookie && exec node /app/computer.js
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9222/json/version').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  grok-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    labels:
+      base44.project: Grok Bot
+      base44.kind: web
+      base44.port: "3000"
+    restart: on-failure
+    ports:
+      - "3000:3000"
+    working_dir: /app
+    env_file:
+      - ./.env.base44-defaults   # placeholders — boots with no credentials
+      - /run/base44/app.env      # platform secrets — always wins
+    environment:
+      - PORT=3000
+      - BASE44_PREVIEW_MODE
+      - BASE44_PUBLIC_HOST_SUFFIX
+      - BASE44_SANDBOX_HOST_DOMAIN
+      - DOCKER_HOST=tcp://socket-proxy:2375
+      - OLLAMA_URL=http://ollama:11434
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:3b}
+      # The boot check matches /api/tags names exactly, so the embedding model
+      # must carry its explicit :latest tag (an untagged pull reports ...:latest).
+      - MODELS_REQUIRED=${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text:latest}
+      - BROWSER_WS=http://127.0.0.1:9222   # shared computer (browser service netns)
+      - ALLOWED_TERMINAL_CONTAINERS=grok-sandbox
+      - SKILLS_DIR=/app/skills
+      - BOOT_STRICT=${BOOT_STRICT:-true}
+      - GROK_MAX_PARALLEL=${GROK_MAX_PARALLEL:-4}
+      - GROK_MIN_PARALLEL=${GROK_MIN_PARALLEL:-1}
+      - GROK_WANT_PARALLEL=${GROK_WANT_PARALLEL:-}
+      - GROK_THERMAL_MAX_C=${GROK_THERMAL_MAX_C:-80}
+      - GROK_GOVERNOR=${GROK_GOVERNOR:-true}
+      - GROK_SQUAD_N=${GROK_SQUAD_N:-4}
+      - GROK_SQUAD_STEPS=${GROK_SQUAD_STEPS:-12}
+      - GROK_DEEP_ROUNDS=${GROK_DEEP_ROUNDS:-3}
+      - GROK_MAX_SPAWN_DEPTH=${GROK_MAX_SPAWN_DEPTH:-2}
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    volumes:
+      - .:/app                      # cloned source — live edits
+      - node_modules:/app/node_modules
+    # `browser` shares this container's network namespace, so it is started by
+    # compose after this service rather than depended on here (no cycle). The
+    # boot chain waits for it before serving, long after the model pulls.
+    depends_on:
+      socket-proxy:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    # Dependencies live in a volume, so install from the current package.json
+    # on every start; the boot chain then pulls models and runs self-tests.
+    # --no-package-lock: the app has no committed lockfile; don't create one in
+    # the bind-mounted checkout on every boot.
+    command: ["sh", "-ec", "npm install --no-audit --no-fund --no-package-lock && exec node --watch src/server.js"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # first boot pulls ~2 GB of models before the API binds :3000
+      start_period: 900s
+
+volumes:
+  ollama_models:
+  browser_profile:
+  node_modules:

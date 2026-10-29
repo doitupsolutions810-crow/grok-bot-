@@ -201,7 +201,7 @@ export function makeRouter({ tools, docker }) {
     return res.status(200).set("Cache-Control", "no-store")
       .set("X-TTS-Voice", result.voice).type("audio/wav").send(result.audio);
   };
-  r.get("/voice/tts", sendTts); // Compatibility for existing clients.
+  r.get("/voice/tts", sendTts); // Keep the legacy GET path; response is now actual WAV audio.
   r.post("/voice/tts", sendTts); // Keeps text out of URL/access logs.
   r.get("/tasks", (req, res) => res.json(listTasks()));
   r.post("/tasks", (req, res) => res.json({ id: addTask(req.body) }));

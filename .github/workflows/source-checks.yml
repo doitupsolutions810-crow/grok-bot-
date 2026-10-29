@@ -24,6 +24,7 @@ jobs:
           node --check src/agents/tool-trace.js
           node --check src/llm/model-chain.js
           node --check tests/model-chain.test.js
+          node --check tests/compose-env.test.js
           node --check src/tools/avrone.js
           node --check tests/avrone-tool.test.js
           node --check tests/tool-trace.test.js
@@ -35,7 +36,7 @@ jobs:
           node --check tests/trinity.unit.test.js
           node --check tests/live.test.js
       - name: Test squad worker-count contract
-        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js
+        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js
       - name: Preserve source-check evidence
         if: always()
         run: |

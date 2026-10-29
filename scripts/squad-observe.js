@@ -245,8 +245,8 @@ async function main() {
   const prompt = [
     "Read-only dual-parallel runtime observation. Correlation marker: " + marker + ".",
     "Use exactly two independent parallel workers, then a lead synthesis.",
-    "Worker 1: independently inspect the assigned terminal sandbox with real, read-only tool calls. Where supported, gather uname -a, hostname, UTC time, node --version, python3 --version, uptime, df -h ., /etc/os-release, process 1, and working directory. Include exact commands and concise outputs. Do not assume the sandbox is the Grok Bot server container; distinguish its host/container identity from the separately collected Node-container runtime snapshot.",
-    "Worker 2: inspect service/bridge wiring and health with real tools. Check readiness, agent/tool availability, governor state, and whether AVRONE is reachable at the configured endpoint. Use read-only GET/status probes only.",
+    "Worker 1: use the terminal tool and independently inspect the assigned terminal sandbox with read-only commands: uname -a, hostname, date -u, node --version, python3 --version, uptime, df -h ., cat /etc/os-release, ps -p 1 -o pid=,comm=, and pwd. Include exact commands, concise outputs, and command failures. Do not dump environment variables or secrets. Do not assume the sandbox is the Grok Bot server container; distinguish its identity from the separately collected Node-container runtime snapshot.",
+    "Worker 2: use the terminal tool to make read-only HTTP probes from the assigned sandbox. Run curl -fsS --max-time 8 http://grok-bot:3000/api/status, curl -fsS --max-time 8 http://grok-bot:3000/api/governor, and curl -fsS --max-time 8 http://avrone:8710/api/status. Report exact HTTP/status output or DNS/network errors. Do not dump environment variables or call any mutating endpoint. Also compare your probe results with the separately collected server-side status data.",
     "Never dump the full environment or print secret values, tokens, cookies, credentials, private data, or full config files. For environment variables, report only safe variable names and present/missing. Separate observed facts from inferences and list unavailable probes as gaps.",
     "Lead: compare reports, identify agreements and contradictions, conclude what the node/server/environment actually reveal, and state whether worker execution intervals overlapped. Do not claim a bridge without a concrete response or receipt."
   ].join("\n");
@@ -281,13 +281,19 @@ async function main() {
     if (spawned.length !== EXPECTED_WORKERS) failures.push("S-mode spawned " + spawned.length + " workers; expected " + EXPECTED_WORKERS + ".");
     if (findings.filter(f => f.ok).length !== EXPECTED_WORKERS) failures.push("Successful worker findings: " +
       findings.filter(f => f.ok).length + "; expected " + EXPECTED_WORKERS + ".");
+    for (const requiredAgent of ["worker-1", "worker-2"]) {
+      const finding = findings.find(f => f.agent === requiredAgent);
+      if (!finding?.tools?.includes("terminal")) {
+        failures.push(requiredAgent + " did not invoke the real terminal tool; command-level environment observation is unverified.");
+      }
+    }
     if (overlappingPairs < 1) failures.push("No overlapping worker intervals were evidenced; parallel execution is unverified.");
   }
 
   if (AVRONE && snapshot.avrone?.ok) {
     const bridgePrompt = [
       "Read-only cross-system S-mode conclusion. Marker: " + marker + ".",
-      "Use your real AVRONE squad to inspect your runner/provider/model/tool inventory and independently assess the Grok Bot telemetry below. Each parallel worker should execute only read-only probes where supported: uname -a, hostname, date -u, python3 --version, ps -p 1 -o pid=,comm=, df -h /srv/workspace /srv/data, pwd, and ls -ld /srv/workspace /srv/data. Report exact outputs and command failures. Do not dump environment variables or full config files.",
+      "Use your real AVRONE squad to inspect your runner/provider/model/tool inventory and independently assess the Grok Bot telemetry below. Each parallel worker should use the shell tool for only read-only probes where supported: uname -a, hostname, date -u, python3 --version, ps -p 1 -o pid=,comm=, df -h /srv/workspace /srv/data, pwd, and ls -ld /srv/workspace /srv/data. Report exact outputs, observed tool names, and command failures. Do not dump environment variables or full config files.",
       "Do not reveal secrets or dump environment values. Separate status/tool evidence from assumptions; state inaccessible network paths.",
       "Grok Bot snapshot: ready=" + snapshot.grokBot?.summary?.ready + "; governor=" +
         (snapshot.governor?.body?.state || "unknown") + "; lanes=" +
@@ -331,6 +337,10 @@ async function main() {
           }))
         }
       };
+      if ((snapshot.avroneSquadTrace.bridge?.count ?? 0) < EXPECTED_WORKERS) {
+        failures.push("AVRONE squad persisted fewer than " + EXPECTED_WORKERS +
+          " inter-agent finding posts; cross-agent communication is not fully evidenced.");
+      }
     } else {
       snapshot.avroneSquadTrace = { error: "The forward bridge did not return an AVRONE run ID; worker-level AVRONE trace unavailable." };
     }

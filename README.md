@@ -26,6 +26,8 @@ docker compose logs -f grok-bot
 
 Full profile adds Whisper STT, Piper TTS, and ComfyUI image generation:
 
+The Piper endpoint uses the unauthenticated Wyoming TCP protocol and therefore remains private to the Compose network; do not publish port 10200 to the host or Internet. The API returns WAV audio and the console adds a Listen action for assistant answers.
+
 ```bash
 docker compose --profile full up -d --build
 ```

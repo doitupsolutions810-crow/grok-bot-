@@ -83,7 +83,7 @@ function redactTraceText(value, maxChars = 2400) {
 // ---------- SQUAD ----------
 export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
   runId = runId || newRunId();
-  emit(runId, "run.start", { mode: "squad", question });
+  emit(runId, "run.start", { mode: "squad", question: redactTraceText(question, 6000) });
 
   // 1. PLAN
   const planReply = await chatRoute(
@@ -93,7 +93,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
   const subtasks = normalizeSubtasks(planReply.content, {
     fallback: desiredWorkers, min: desiredWorkers, max: desiredWorkers, source: question
   });
-  emit(runId, "plan.ready", { subtasks });
+  emit(runId, "plan.ready", { subtasks: subtasks.map(sub => redactTraceText(sub, 600)) });
   onNote?.({ note: `Plan ready: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}` });
 
   // 2. SQUAD — real agents in parallel, governor-gated, failure-isolated
@@ -164,7 +164,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
 export async function runDeep(agent, question, tools, { rounds, firstAnswer, onNote, runId } = {}) {
   runId = runId || newRunId();
   const maxRounds = rounds || DEEP_ROUNDS();
-  emit(runId, "run.start", { mode: "deep", question });
+  emit(runId, "run.start", { mode: "deep", question: redactTraceText(question, 6000) });
 
   // Draft answer: reuse the chat answer if the caller already produced one
   const draft = firstAnswer || await runAgent(agent, question, tools, { runId, agentName: agent.id });
@@ -188,8 +188,8 @@ export async function runDeep(agent, question, tools, { rounds, firstAnswer, onN
           `Review the draft answer below as ${angle}. List concrete corrections (one per line, prefixed with "Correction:") or reply "no corrections".\n\nDraft:\n${draft}`,
           tools, { maxSteps: 6, runId, agentName: `reviewer-${i + 1}` }) };
       } catch (e) {
-        emit(runId, "error", { agent: `reviewer-${i + 1}`, error: e.message });
-        return { ok: false, error: e.message };
+        emit(runId, "error", { agent: `reviewer-${i + 1}`, error: safeToolTraceText(e.message || e, 500) });
+        return { ok: false, error: safeToolTraceText(e.message || e, 500) };
       }
     });
 

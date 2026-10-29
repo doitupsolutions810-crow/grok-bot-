@@ -28,6 +28,7 @@ jobs:
           node --check tests/model-chain.test.js
           node --check tests/compose-env.test.js
           node --check src/router.js
+          node scripts/check-inline-js.js
           node --check tests/tool-trace.test.js
           node --check src/agents/subtasks.js
           node --check src/agents/trinity.js

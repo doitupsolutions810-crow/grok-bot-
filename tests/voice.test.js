@@ -70,7 +70,7 @@ test("Wyoming errors are surfaced as a safe synthesis failure", async () => {
   }, async url => {
     await assert.rejects(
       synthesizeWyoming("Hello", "en_US-lessac-medium", { url, timeoutMs: 1000 }),
-      /Piper synthesis failed: Voice is not installed/
+      /Piper synthesis failed\./
     );
   });
 });

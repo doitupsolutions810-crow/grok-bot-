@@ -170,7 +170,10 @@ async function main() {
     snapshot.avrone = avr.ok ? { ok: true, httpStatus: avr.httpStatus, summary: safeAvroneStatus(avr.body) } :
       { configured: true, ...avr };
     if (avr.ok && (!avr.body?.runner || !avr.body?.provider)) failures.push("AVRONE status omitted runner/provider evidence.");
-  } else snapshot.avrone = { configured: false, ok: false, error: "AVRONE_URL is not configured." };
+  } else {
+    snapshot.avrone = { configured: false, ok: false, error: "AVRONE_URL is not configured." };
+    failures.push("AVRONE_URL is not configured; the required integrated-stack bridge checks were skipped.");
+  }
 
   const prompt = [
     "Read-only dual-parallel runtime observation. Correlation marker: " + marker + ".",
@@ -227,10 +230,11 @@ async function main() {
       method: "POST", body: JSON.stringify({ prompt: bridgePrompt, mode: "squad" })
     }, 240000);
     snapshot.grokToAvrone = forward.ok
-      ? { configured: true, ok: !!forward.body?.ok && typeof forward.body?.answer === "string" && !!forward.body.answer.trim(),
+      ? { configured: true, ok: !!forward.body?.ok && typeof forward.body?.answer === "string" &&
+          !!forward.body.answer.trim() && typeof forward.body?.runId === "string" && !!forward.body.runId,
           runId: forward.body?.runId || null, answer: redact(forward.body?.answer || JSON.stringify(forward.body), 2400) }
       : { configured: true, ok: false, error: forward.error };
-    if (!snapshot.grokToAvrone.ok) failures.push("Grok Bot → AVRONE did not return a nonempty successful squad answer.");
+    if (!snapshot.grokToAvrone.ok) failures.push("Grok Bot → AVRONE did not return a nonempty squad answer with a correlatable AVRONE run ID.");
 
     if (forward.ok && forward.body?.runId) {
       const avrRunId = encodeURIComponent(forward.body.runId);
@@ -277,7 +281,8 @@ async function main() {
     if (receipts.ok && Array.isArray(receipts.body)) {
       const recentRuns = receipts.body.slice(0, 12);
       const correlated = recentRuns.filter(r => String(r.prompt || "").includes(marker));
-      const candidates = correlated.length ? correlated : recentRuns.slice(0, 3);
+      // Never accept a receipt from an unrelated historical run as evidence for this marker.
+      const candidates = correlated;
       for (const run of candidates) {
         const id = run.run_id || run.runId;
         if (!id) continue;

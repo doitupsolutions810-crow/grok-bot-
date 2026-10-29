@@ -4,6 +4,7 @@
 # to the host only on loopback. No Docker socket is mounted into AVRONE.
 services:
   avrone:
+    networks: [default, grok-integration]
     build:
       context: ${AVRONE_BUILD_CONTEXT:-../Avrone}
       dockerfile: Dockerfile
@@ -43,8 +44,10 @@ services:
       start_period: 45s
 
   grok-bot:
+    networks: [default, grok-integration]
     environment:
       AVRONE_URL: http://avrone:8710
+      GROK_SANDBOX_NETWORK: grok-integration
     depends_on:
       avrone:
         condition: service_healthy
@@ -58,3 +61,8 @@ services:
 volumes:
   avrone_workspace:
   avrone_data:
+
+networks:
+  default: {}
+  grok-integration:
+    name: grok-integration

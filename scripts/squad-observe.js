@@ -33,7 +33,7 @@ function runReadOnlyCommand(command, args) {
     });
     return { ok: true, output: redact(String(output || "").trim(), 1600) };
   } catch (error) {
-    const output = [error.stdout, error.stderr, error.message].filter(Boolean).join("\\n");
+    const output = [error.stdout, error.stderr, error.message].filter(Boolean).join("\n");
     return { ok: false, output: redact(output.trim(), 500) };
   }
 }

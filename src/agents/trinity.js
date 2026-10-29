@@ -70,7 +70,13 @@ async function pool(items, lanes, fn) {
   await Promise.all(Array.from({ length: n }, async () => {
     while (i < items.length) {
       const idx = i++;
-      out[idx] = awaifunction redactTraceText(value, maxChars = 2400) {
+      out[idx] = await fn(items[idx], idx);
+    }
+  }));
+  return out;
+}
+
+function redactTraceText(value, maxChars = 2400) {
   return safeToolTraceText(value, maxChars);
 }
 

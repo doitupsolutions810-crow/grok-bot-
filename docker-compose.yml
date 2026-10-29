@@ -55,6 +55,8 @@ services:
       SKILLS_DIR: /app/skills
       WHISPER_URL: ${WHISPER_URL:-}             # full profile: http://whisper:9000 (HTTP STT sidecar)
       PIPER_CMD: ${PIPER_CMD:-}                 # TTS binary override (default: piper)
+      PIPER_URL: ${PIPER_URL:-}                   # optional private Wyoming Piper TCP service
+      TTS_VOICE: ${TTS_VOICE:-en_US-lessac-medium}
       AVRONE_URL: ${AVRONE_URL:-}               # the concluding system bridge -> AVRONE
     volumes:
       - ./config:/app/config
@@ -90,7 +92,10 @@ services:
     image: rhasspy/wyoming-piper:latest
     restart: unless-stopped
     profiles: ["full"]
-    volumes: [./voices:/voices]
+    command: ["--voice", "en_US-lessac-medium"]
+    volumes:
+      - ./voices:/voices
+      - piper_data:/data
 
   comfyui:
     image: ghcr.io/comfyanonymous/comfyui:latest
@@ -105,3 +110,4 @@ volumes:
   comfyui_models:
   browser_profile:                  # shared persistent browser computer
   grok_workspace:                   # shared sandbox filesystem for all agents
+  piper_data:                       # downloaded Piper voice models and cache

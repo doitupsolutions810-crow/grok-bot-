@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { safeToolTraceText } from "../src/agents/tool-trace.js";
 
 const BASE = (process.env.GROKBOT_URL || "http://localhost:3000").replace(/\/+$/, "");
 const AVRONE = (process.env.AVRONE_URL || "").replace(/\/+$/, "");
@@ -15,13 +16,9 @@ const snapshot = { createdAt: new Date().toISOString(), marker, expectedWorkers:
   nodeRuntime: null, grokBot: null, governor: null, containers: null, avrone: null, grokSquad: null,
   grokToAvrone: { configured: !!AVRONE, ok: false, error: AVRONE ? "Forward bridge not attempted yet." : "AVRONE_URL is not configured." },
   avroneToGrok: { configured: !!AVRONE, ok: false, error: AVRONE ? "Reverse bridge not attempted yet." : "AVRONE_URL is not configured." },
-  avroneSquadTrace: null, avroneReverseTrace: null, bridgeReceipts: [], conclusions: [] };
-
-function redact(value, cap = 3000) {
-  return String(value ?? "")
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
-    .replace(/(api[_-]?key|token|password|secret|authorization|cookie|private[_ -]?key)(\s*[:=]\s*)(["']?)[^\s"',;]+/gi, "$1$2[REDACTED]")
+  avroneSquadTrace: null, afunction redact(value, cap = 3000) {
+  return safeToolTraceText(value, cap);
+}\s*)(["']?)[^\s"',;]+/gi, "$1$2[REDACTED]")
     .slice(0, cap);
 }
 

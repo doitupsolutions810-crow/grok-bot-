@@ -25,6 +25,8 @@ jobs:
           node --check src/voice/voice.js
           node --check tests/voice.test.js
           node --check src/router.js
+          node scripts/check-inline-js.js
+          node --check scripts/check-inline-js.js
           node --check src/llm/model-chain.js
           node --check tests/model-chain.test.js
           node --check tests/compose-env.test.js

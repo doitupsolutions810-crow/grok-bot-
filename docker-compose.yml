@@ -3,6 +3,8 @@ services:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     environment:
+      PING: 1
+      INFO: 1
       CONTAINERS: 1
       EXEC: 1
       POST: 1

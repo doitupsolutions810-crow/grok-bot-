@@ -4,7 +4,6 @@ import os from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { safeToolTraceText } from "../src/agents/tool-trace.js";
-import { safeToolTraceText } from "../src/agents/tool-trace.js";
 
 const BASE = (process.env.GROKBOT_URL || "http://localhost:3000").replace(/\/+$/, "");
 const AVRONE = (process.env.AVRONE_URL || "").replace(/\/+$/, "");

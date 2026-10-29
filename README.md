@@ -32,7 +32,7 @@ docker compose --profile full up -d --build
 
 Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
 
-To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
+To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 120 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
 
 ## What's inside
 

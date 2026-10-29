@@ -118,7 +118,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
       });
       return { ok: true, answer };
     } catch (e) {
-      emit(runId, "error", { agent: workerId, error: String(e.message || e).slice(0, 500) });
+      emit(runId, "error", { agent: workerId, error: safeToolTraceText(e.message || e, 500) });
       emit(runId, "worker.finding", {
         agent: workerId, ok: false, task: redactTraceText(sub, 600),
         error: redactTraceText(e.message || e, 500), answer_chars: 0
@@ -126,7 +126,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
       emit(runId, "worker.finish", {
         agent: workerId, ok: false, at_ms: Date.now(), duration_ms: Date.now() - startedAt
       });
-      return { ok: false, error: e.message };
+      return { ok: false, error: safeToolTraceText(e.message || e, 500) };
     }
   });
 

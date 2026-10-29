@@ -10,6 +10,7 @@ import { runAgent } from "./runtime.js";
 import { governor } from "./governor.js";
 import { emit, newRunId, replay, runs } from "./codex.js";
 import { normalizeSubtasks } from "./subtasks.js";
+import { safeToolTraceText } from "./tool-trace.js";
 export { normalizeSubtasks } from "./subtasks.js";
 
 const SQUAD_N = () => Math.max(1, Number(process.env.GROK_SQUAD_N) || 4);
@@ -69,17 +70,9 @@ async function pool(items, lanes, fn) {
   await Promise.all(Array.from({ length: n }, async () => {
     while (i < items.length) {
       const idx = i++;
-      out[idx] = await fn(items[idx], idx);
-    }
-  }));
-  return out;
-}
-
-function redactTraceText(value, maxChars = 2400) {
-  return String(value ?? "")
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
-    .replace(/(api[_-]?key|token|password|secret|authorization|cookie|private[_ -]?key)(\s*[:=]\s*)(["']?)[^\s"',;]+/gi, "$1$2[REDACTED]")
+      out[idx] = awaifunction redactTraceText(value, maxChars = 2400) {
+  return safeToolTraceText(value, maxChars);
+},;]+/gi, "$1$2[REDACTED]")
     .slice(0, maxChars);
 }
 

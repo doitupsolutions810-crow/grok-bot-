@@ -19,6 +19,8 @@ jobs:
           node-version: "24"
       - name: Parse changed JavaScript
         run: |
+          node --check src/agents/tool-trace.js
+          node --check tests/tool-trace.test.js
           node --check src/agents/subtasks.js
           node --check src/agents/trinity.js
           node --check src/agents/runtime.js
@@ -27,7 +29,7 @@ jobs:
           node --check tests/trinity.unit.test.js
           node --check tests/live.test.js
       - name: Test exact S-mode lane contract (no package install needed)
-        run: node --test tests/trinity.unit.test.js
+        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js
       - name: Preserve source-check evidence
         if: always()
         run: |

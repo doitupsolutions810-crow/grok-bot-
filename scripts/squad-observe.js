@@ -224,11 +224,25 @@ async function main() {
       method: "POST", body: JSON.stringify({ mode: "chat", message: reversePrompt })
     }, 240000);
     const reverseAnswer = reverse.ok ? redact(reverse.body?.answer || JSON.stringify(reverse.body), 1800) : "";
-    const receipts = await probe("AVRONE bridge receipts", AVRONE + "/api/runs");
-    const events = receipts.ok && Array.isArray(receipts.body) ?
-      receipts.body.flatMap(r => (r.events || []).map(e => ({ runId: r.runId, ...e }))) : [];
-    const receipt = [...events].reverse().find(e => e.kind === "grokbot.bridge" &&
-      (e.data?.ok === true || e.ok === true));
+    const receipts = await probe("AVRONE bridge run index", AVRONE + "/api/runs");
+    let receipt = null;
+    if (receipts.ok && Array.isArray(receipts.body)) {
+      const recentRuns = receipts.body.slice(0, 12);
+      const correlated = recentRuns.filter(r => String(r.prompt || "").includes(marker));
+      const candidates = correlated.length ? correlated : recentRuns.slice(0, 3);
+      for (const run of candidates) {
+        const id = run.run_id || run.runId;
+        if (!id) continue;
+        const detail = await probe("AVRONE CodeX replay", AVRONE + "/api/runs/" + encodeURIComponent(id));
+        if (!detail.ok || !Array.isArray(detail.body)) continue;
+        const found = [...detail.body].reverse().find(e => e.kind === "grokbot.bridge" &&
+          e.data?.ok === true);
+        if (found) {
+          receipt = { ...found, runId: id };
+          break;
+        }
+      }
+    }
     snapshot.bridgeReceipts = receipt ? [{ runId: receipt.runId || null, kind: receipt.kind, ok: true,
       agent: receipt.data?.agent || receipt.agent || "grok-researcher",
       answerChars: receipt.data?.answer_chars || receipt.answer_chars || null }] : [];

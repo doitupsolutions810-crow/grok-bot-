@@ -207,7 +207,8 @@ async function synthesizeOnce(text, voice, endpoint, timeoutMs) {
     for (;;) {
       const event = await reader.readEvent();
       if (event.type === "error") {
-        throw new Error("Piper synthesis failed" + (event.data?.text ? ": " + String(event.data.text).slice(0, 180) : "."));
+        // Do not echo remote error text into user-visible API responses.
+        throw new Error("Piper synthesis failed.");
       }
       if (event.type === "audio-start") {
         audioFormat = {
@@ -248,8 +249,14 @@ export async function synthesizeWyoming(text, voice, { url = process.env.PIPER_U
       await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)));
     }
   }
+  const message = String(lastError?.message || "");
+  const safeDiagnostic = message.startsWith("PIPER_URL") ||
+    message.startsWith("Piper synthesis failed.") ||
+    message.startsWith("Piper disconnected ") ||
+    message.startsWith("Piper returned ") ||
+    message.startsWith("Piper sent ");
   throw new Error(lastError?.code === "ETIMEDOUT" ? "Piper audio synthesis timed out." :
-    lastError?.message?.startsWith("PIPER_URL") ? lastError.message : "Piper audio service is unavailable or rejected the request.");
+    safeDiagnostic ? message.slice(0, 240) : "Piper audio service is unavailable or rejected the request.");
 }
 
 function localSynthesis(text, voice) {

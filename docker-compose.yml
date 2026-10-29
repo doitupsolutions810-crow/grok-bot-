@@ -92,7 +92,8 @@ services:
     image: rhasspy/wyoming-piper:latest
     restart: unless-stopped
     profiles: ["full"]
-    command: ["--voice", "en_US-lessac-medium"]
+    # Image entrypoint supplies the private TCP listener and --data-dir /data.
+    command: ["--voice", "en_US-lessac-medium", "--download-dir", "/data"]
     volumes:
       - ./voices:/voices
       - piper_data:/data

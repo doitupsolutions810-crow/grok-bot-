@@ -23,6 +23,9 @@ jobs:
           node --check src/voice/voice.js
           node --check tests/voice.test.js
           node --check src/llm/model-chain.js
+          node --check src/llm/router.js
+          node --check src/boot/preinstall.js
+          node --check src/server.js
           node --check src/tools/avrone.js
           node --check tests/avrone-tool.test.js
           node --check tests/model-chain.test.js

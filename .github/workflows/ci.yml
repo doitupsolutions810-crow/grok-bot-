@@ -74,9 +74,11 @@ jobs:
         run: docker compose exec -T grok-bot node tests/live.test.js
 
       - name: Dual-parallel node/server/environment witnesses and bidirectional bridge receipts
+        if: always()
         run: docker compose exec -T grok-bot node scripts/squad-observe.js
 
       - name: Agents' recursive evolution loop (reads live observations and writes EVOLVE.md)
+        if: always()
         run: docker compose exec -T grok-bot node scripts/evolve.js
 
       - name: Boot + agent logs on failure
@@ -100,7 +102,7 @@ jobs:
           if [ -f data/observations/latest.json ]; then cp data/observations/latest.json diagnostics/squad-observation.json; fi
           if [ -f data/EVOLVE.md ]; then cp data/EVOLVE.md diagnostics/EVOLVE.md; fi
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: grok-bot-live-diagnostics-${{ github.run_id }}
           path: diagnostics/

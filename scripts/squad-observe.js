@@ -4,6 +4,7 @@ import os from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { safeToolTraceText } from "../src/agents/tool-trace.js";
+import { safeToolTraceText } from "../src/agents/tool-trace.js";
 
 const BASE = (process.env.GROKBOT_URL || "http://localhost:3000").replace(/\/+$/, "");
 const AVRONE = (process.env.AVRONE_URL || "").replace(/\/+$/, "");
@@ -18,8 +19,6 @@ const snapshot = { createdAt: new Date().toISOString(), marker, expectedWorkers:
   avroneToGrok: { configured: !!AVRONE, ok: false, error: AVRONE ? "Reverse bridge not attempted yet." : "AVRONE_URL is not configured." },
   avroneSquadTrace: null, afunction redact(value, cap = 3000) {
   return safeToolTraceText(value, cap);
-}\s*)(["']?)[^\s"',;]+/gi, "$1$2[REDACTED]")
-    .slice(0, cap);
 }
 
 function runReadOnlyCommand(command, args) {

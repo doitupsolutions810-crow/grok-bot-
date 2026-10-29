@@ -13,18 +13,26 @@ async function withFakePiper(handler, run) {
   const received = [];
   const server = createServer(socket => {
     let buffered = Buffer.alloc(0);
-    let replied = false;
     socket.on("data", chunk => {
       buffered = Buffer.concat([buffered, chunk]);
-      const newline = buffered.indexOf(0x0a);
-      if (newline < 0 || replied) return;
-      replied = true;
-      try {
-        const request = JSON.parse(buffered.subarray(0, newline).toString("utf8"));
-        received.push(request);
-        handler(socket, request);
-      } catch {
-        socket.destroy();
+      for (;;) {
+        const newline = buffered.indexOf(0x0a);
+        if (newline < 0) return;
+        const line = buffered.subarray(0, newline).toString("utf8");
+        buffered = buffered.subarray(newline + 1);
+        try {
+          const request = JSON.parse(line);
+          received.push(request);
+          if (request.type === "describe") {
+            // Wyoming requires an info reply before the synthesis request.
+            socket.write(frame("info", { tts: [{ name: "piper" }] }));
+          } else {
+            handler(socket, request);
+          }
+        } catch {
+          socket.destroy();
+          return;
+        }
       }
     });
   });
@@ -50,8 +58,9 @@ test("Wyoming synthesis creates a valid WAV from audio-start and audio-chunk eve
     ]));
   }, async (url, received) => {
     const wav = await synthesizeWyoming("Hello from test", "en_US-lessac-medium", { url, timeoutMs: 1000 });
-    assert.equal(received.length, 1);
-    assert.deepEqual(received[0], {
+    assert.equal(received.length, 2);
+    assert.deepEqual(received[0], { type: "describe" });
+    assert.deepEqual(received[1], {
       type: "synthesize",
       data: { text: "Hello from test", voice: { name: "en_US-lessac-medium" } }
     });

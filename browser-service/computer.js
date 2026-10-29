@@ -20,6 +20,10 @@ const child = spawn(chromium.executablePath(), [
   `--remote-debugging-port=${CDP_PORT}`,
   "--user-data-dir=/profile",
   "--window-size=1280,800",
+  // Container has no dbus/GPU driver: keep Chromium's expected dbus/Vulkan
+  // stderr noise out of the service logs (logging below FATAL, no Vulkan).
+  "--log-level=3",
+  "--disable-features=Vulkan",
   "about:blank"
 ], { stdio: "inherit" });
 

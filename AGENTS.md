@@ -46,7 +46,12 @@ hang — watch `docker compose logs -f ollama`.
     orphans the browser** — always follow with
     `docker compose -f docker-compose.base44.yml up -d --force-recreate browser`;
   - the persistent profile volume keeps Chromium's `SingletonLock` between
-    containers; the service command clears it before launching.
+    containers; the service command clears it before launching;
+  - the container has no dbus or GPU driver, so `computer.js` passes
+    `--log-level=3 --disable-features=Vulkan`. Without them Chromium floods the
+    service log with `dbus/bus.cc` errors and Vulkan warnings that look like
+    failures but are harmless. Keep the flags: `browser` must log exactly two
+    lines (`shared computer browser on CDP` + `DevTools listening`).
 - The app creates the `grok-sandbox` container itself through the Docker API, so the
   app image needs the Docker CLI and `socket-proxy` must allow CONTAINERS/EXEC/POST/PULL.
 - No external credentials are required. `X_API_BEARER` (X mention poller) and

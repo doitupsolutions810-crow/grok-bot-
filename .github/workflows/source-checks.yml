@@ -22,6 +22,9 @@ jobs:
       - name: Static JavaScript syntax checks
         run: |
           node --check src/agents/tool-trace.js
+          node --check src/voice/voice.js
+          node --check tests/voice.test.js
+          node --check src/router.js
           node --check src/llm/model-chain.js
           node --check tests/model-chain.test.js
           node --check tests/compose-env.test.js
@@ -36,14 +39,14 @@ jobs:
           node --check tests/trinity.unit.test.js
           node --check tests/live.test.js
       - name: Test squad worker-count contract
-        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js
+        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js tests/voice.test.js
       - name: Preserve source-check evidence
         if: always()
         run: |
           mkdir -p diagnostics
           node --version > diagnostics/node-version.txt 2>&1 || true
           npm --version > diagnostics/npm-version.txt 2>&1 || true
-          node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js > diagnostics/unit-tests.txt 2>&1 || true
+          node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js tests/model-chain.test.js tests/compose-env.test.js tests/voice.test.js > diagnostics/unit-tests.txt 2>&1 || true
           git status --short > diagnostics/git-status.txt 2>&1 || true
           if [ -d /tmp/grok-bot-runs ]; then cp -R /tmp/grok-bot-runs diagnostics/runs; fi
       - uses: actions/upload-artifact@v4

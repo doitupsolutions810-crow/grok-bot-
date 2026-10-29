@@ -71,3 +71,4 @@ networks:
   default: {}
   grok-integration:
     name: grok-integration
+    internal: true

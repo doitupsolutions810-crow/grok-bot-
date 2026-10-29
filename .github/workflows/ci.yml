@@ -14,14 +14,28 @@ jobs:
       BOOT_STRICT: "true"
       AVRONE_BUILD_CONTEXT: Avrone
       COMPOSE_FILE: docker-compose.yml:docker-compose.integration.yml
+      GROK_SQUAD_N: "2"
+      GROK_MAX_PARALLEL: "2"
+      GROK_MIN_PARALLEL: "2"
+      AVRONE_SQUAD_SIZE: "2"
+      AVRONE_MAX_PARALLEL: "2"
+      AVRONE_MIN_PARALLEL: "2"
     steps:
       - uses: actions/checkout@v4
       - name: Checkout AVRONE for integrated-stack validation
         uses: actions/checkout@v4
         with:
           repository: doitupsolutions810-crow/Avrone
-          ref: main
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'codex/inspect-integration-hardening' && 'codex/inspect-integration-hardening' || 'main' }}
           path: Avrone
+
+      - name: Fast source syntax checks
+        run: |
+          node --check src/agents/trinity.js
+          node --check scripts/evolve.js
+          node --check scripts/squad-observe.js
+          node --check tests/trinity.unit.test.js
+          node --check tests/live.test.js
 
       - name: Config compatibility check (core + full + integration)
         run: |
@@ -29,6 +43,7 @@ jobs:
           docker compose --profile full config --quiet
           test -f Avrone/Dockerfile
           test -f Avrone/pyproject.toml
+          python -c "import tomllib; tomllib.load(open('Avrone/pyproject.toml', 'rb'))"
 
       - name: Bring up the full integrated live stack
         run: docker compose --profile full up -d --build
@@ -52,10 +67,16 @@ jobs:
             exit 1
           fi
 
+      - name: Squad normalization unit tests
+        run: docker compose exec -T grok-bot node --test tests/trinity.unit.test.js
+
       - name: Live agent tests (real inference, Docker exec, browser, AVRONE bridge)
         run: docker compose exec -T grok-bot node tests/live.test.js
 
-      - name: Agents' evolution loop (writes EVOLVE.md from the live runs)
+      - name: Dual-parallel node/server/environment witnesses and bidirectional bridge receipts
+        run: docker compose exec -T grok-bot node scripts/squad-observe.js
+
+      - name: Agents' recursive evolution loop (reads live observations and writes EVOLVE.md)
         run: docker compose exec -T grok-bot node scripts/evolve.js
 
       - name: Boot + agent logs on failure
@@ -75,6 +96,9 @@ jobs:
           docker compose logs --no-color --tail 500 > diagnostics/compose.log 2>&1 || true
           docker compose config > diagnostics/compose-config.yml 2>&1 || true
           if [ -f status.json ]; then cp status.json diagnostics/status.json; fi
+          if [ -f data/observations/latest.md ]; then cp data/observations/latest.md diagnostics/squad-observation.md; fi
+          if [ -f data/observations/latest.json ]; then cp data/observations/latest.json diagnostics/squad-observation.json; fi
+          if [ -f data/EVOLVE.md ]; then cp data/EVOLVE.md diagnostics/EVOLVE.md; fi
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

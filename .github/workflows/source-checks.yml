@@ -21,6 +21,8 @@ jobs:
           node-version: "24"
       - name: Static JavaScript syntax checks
         run: |
+          node --check src/agents/tool-trace.js
+          node --check tests/tool-trace.test.js
           node --check src/agents/subtasks.js
           node --check src/agents/trinity.js
           node --check scripts/evolve.js
@@ -28,7 +30,7 @@ jobs:
           node --check tests/trinity.unit.test.js
           node --check tests/live.test.js
       - name: Test squad worker-count contract
-        run: node --test tests/trinity.unit.test.js
+        run: node --test tests/trinity.unit.test.js tests/tool-trace.test.js
       - name: Preserve source-check evidence
         if: always()
         run: |

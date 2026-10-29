@@ -11,8 +11,9 @@ const marker = "SQUAD_OBSERVATION_" + Date.now().toString(36) + "_" + randomUUID
 const failures = [];
 const snapshot = { createdAt: new Date().toISOString(), marker, expectedWorkers: EXPECTED_WORKERS,
   grokBot: null, governor: null, containers: null, avrone: null, grokSquad: null,
-  grokToAvrone: null, avroneToGrok: null, avroneSquadTrace: null, avroneReverseTrace: null,
-  bridgeReceipts: [], conclusions: [] };
+  grokToAvrone: { configured: !!AVRONE, ok: false, error: AVRONE ? "Forward bridge not attempted yet." : "AVRONE_URL is not configured." },
+  avroneToGrok: { configured: !!AVRONE, ok: false, error: AVRONE ? "Reverse bridge not attempted yet." : "AVRONE_URL is not configured." },
+  avroneSquadTrace: null, avroneReverseTrace: null, bridgeReceipts: [], conclusions: [] };
 
 function redact(value, cap = 3000) {
   return String(value ?? "")

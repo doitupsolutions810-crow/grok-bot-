@@ -15,6 +15,10 @@ services:
       AVRONE_PROVIDER: ollama
       AVRONE_LLM_BASE_URL: http://ollama:11434/v1
       AVRONE_LLM_MODEL: ${AVRONE_LLM_MODEL:-qwen2.5:3b}
+      # Keep this pass deliberately dual-parallel on both orchestration layers.
+      AVRONE_SQUAD_SIZE: ${AVRONE_SQUAD_SIZE:-2}
+      AVRONE_MAX_PARALLEL: ${AVRONE_MAX_PARALLEL:-2}
+      AVRONE_MIN_PARALLEL: ${AVRONE_MIN_PARALLEL:-2}
       AVRONE_RUNNER: local
       AVRONE_ALLOW_NETWORK: "false"
       AVRONE_AGENTS_CAN_SHELL: "true"

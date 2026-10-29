@@ -11,6 +11,7 @@ import { addTask, listTasks, runTask, setTaskRunner } from "./tasks/scheduler.js
 import { issueToken, authRequired } from "./middleware/auth.js";
 import { agentsCrud } from "./middleware/agents-crud.js";
 import { pending, decide, takeHeld } from "./middleware/approvals.js";
+import { asText } from "./memory/store.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
   sseStart, sseNote, sseDone
@@ -38,10 +39,15 @@ export function makeRouter({ tools, docker }) {
   const runWithMemory = async (agentId, session, message) => {
     const agent = agentId === "team" ? dispatch(message) : find(agentId);
     const ctx = buildContext(session, message);
-    const answer = await runAgent(agent, ctx, tools);
+    const out = await runAgent(agent, ctx, tools);
+    // Auto Review paused the thread: tell the user how to release or reject it instead of crashing.
+    const answer = out && out.pendingApproval != null
+      ? `Auto Review is holding a risky command for your approval (#${out.pendingApproval}). `
+        + `Approve or reject it in the console's Approvals panel, or POST /api/approvals/${out.pendingApproval}/decision {"approve":true|false}.`
+      : out;
     await remember(session, "user", message);
     await remember(session, "assistant", answer);
-    return { agent, answer };
+    return { agent, answer, pendingApproval: out && out.pendingApproval != null ? out.pendingApproval : undefined };
   };
 
   r.get("/health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
@@ -53,6 +59,7 @@ export function makeRouter({ tools, docker }) {
   r.get("/ledger", (req, res) => res.json(ledger()));
 
   // Auth (enable r.use(authRequired) below for exposed deployments)
+  // Token minting requires the app password when auth is enabled (the gate in server.js enforces it).
   r.post("/auth/token", (req, res) => res.json({ token: issueToken() }));
   // r.use(authRequired);
 
@@ -96,7 +103,7 @@ export function makeRouter({ tools, docker }) {
     } catch (e) { result = { error: e.message }; }
     held.messages.push({ role: "tool", tool_call_id: held.call.id, content: JSON.stringify(result) });
     const answer = await runAgent(held.agent, "", tools, { resume: held.messages, runId: held.ctx?.run?.runId, agentName: held.ctx?.agent });
-    res.json({ ok: true, approved: true, resumed: true, answer: typeof answer === "string" ? answer : answer });
+    res.json({ ok: true, approved: true, resumed: true, answer: asText(answer), ...(answer && answer.pendingApproval != null ? { pendingApproval: answer.pendingApproval } : {}) });
   });
 
   // ---------- X triggers ----------
@@ -130,8 +137,8 @@ export function makeRouter({ tools, docker }) {
     } else if (mode === "deepsearch") {
       answer = (await deepSearch(message, tools.find(t => t.name === "browser"))).synthesis;
     } else {
-      ({ answer } = await runWithMemory(agent.id, session, message));
-      return res.json({ agentId: agent.id, mode, answer });
+      const out = await runWithMemory(agent.id, session, message);
+      return res.json({ agentId: agent.id, mode, answer: out.answer, ...(out.pendingApproval != null ? { pendingApproval: out.pendingApproval } : {}) });
     }
     await remember(session, "user", message);
     await remember(session, "assistant", answer);

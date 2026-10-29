@@ -27,6 +27,7 @@ jobs:
           node --check tests/tool-trace.test.js
           node --check src/agents/subtasks.js
           node --check src/agents/trinity.js
+          node --check src/boot/docker.js
           node --check scripts/evolve.js
           node --check scripts/squad-observe.js
           node --check tests/trinity.unit.test.js
@@ -39,6 +40,7 @@ jobs:
           mkdir -p diagnostics
           node --version > diagnostics/node-version.txt 2>&1 || true
           npm --version > diagnostics/npm-version.txt 2>&1 || true
+          node --test tests/trinity.unit.test.js tests/tool-trace.test.js tests/avrone-tool.test.js > diagnostics/unit-tests.txt 2>&1 || true
           git status --short > diagnostics/git-status.txt 2>&1 || true
           if [ -d /tmp/grok-bot-runs ]; then cp -R /tmp/grok-bot-runs diagnostics/runs; fi
       - uses: actions/upload-artifact@v4

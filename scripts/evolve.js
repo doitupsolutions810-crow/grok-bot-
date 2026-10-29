@@ -9,6 +9,7 @@
 //   docker compose exec grok-bot node scripts/evolve.js
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseEventLine, recordEvent } from "./evolve-core.js";
 
 const DATA = process.env.DATA_DIR || "/app/data";
 const SKILLS = process.env.SKILLS_DIR || "/app/skills";
@@ -28,16 +29,8 @@ function scanRuns() {
         for (const line of lines) {
           const t = line.trim();
           if (!t) continue;
-          let ev;
-          try { ev = JSON.parse(t); } catch { continue; }   // corrupt line: skip
-          stats.events++;
-          const kind = String(ev.kind || ev.type || "event");
-          stats.byKind[kind] = (stats.byKind[kind] || 0) + 1;
-          const tool = ev.tool || ev.name;
-          if (kind.includes("tool") && tool) {
-            stats.toolCalls[tool] = (stats.toolCalls[tool] || 0) + 1;
-          }
-          if (kind.includes("error") || ev.error) stats.errors++;
+          const ev = parseEventLine(t); // malformed JSON and non-object roots are skipped
+          if (ev) recordEvent(stats, ev);
         }
       }
     }

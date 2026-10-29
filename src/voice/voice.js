@@ -54,6 +54,15 @@ export async function transcribe(wavBuffer) {
   }
 }
 
+function encodeWyomingEvent(type, data) {
+  const header = { type };
+  const dataBytes = data === undefined ? null : Buffer.from(JSON.stringify(data), "utf8");
+  if (dataBytes?.length) header.data_length = dataBytes.length;
+  return dataBytes?.length
+    ? Buffer.concat([Buffer.from(JSON.stringify(header) + "\n"), dataBytes])
+    : Buffer.from(JSON.stringify(header) + "\n");
+}
+
 function validateText(text) {
   const value = String(text ?? "").trim();
   if (!value) throw new Error("text is required.");
@@ -206,10 +215,9 @@ async function synthesizeOnce(text, voice, endpoint, timeoutMs) {
       throw new Error("Piper did not answer the Wyoming describe handshake.");
     }
 
-    socket.write(JSON.stringify({
-      type: "synthesize",
-      data: { text, voice: { name: voice } }
-    }) + "\n");
+    socket.write(encodeWyomingEvent("synthesize", {
+      text, voice: { name: voice }
+    }));
 
     let audioFormat = null;
     const chunks = [];

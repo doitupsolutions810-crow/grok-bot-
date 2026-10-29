@@ -152,6 +152,17 @@ From the Grok Bot repository root:
 
 When `../Avrone` exists, the launcher runs AVRONE's offline test suite and uses `docker-compose.integration.yml` to start both services. To fail closed instead of allowing core-only mode when AVRONE is missing, run `LAUNCH_REQUIRE_AVRONE=true ./launch.sh`. Run `./verify.sh` for the bounded boot gate and live suite; with the sibling repository present it requires the bridge test too.
 
+## Runtime witnesses and learning loop
+
+For a bounded two-worker runtime observation against the running APIs, run:
+`docker compose exec -T grok-bot node scripts/squad-observe.js`
+
+The observer calls the actual status, governor, container, CodeX replay, AVRONE tool-list and learning-bridge endpoints. It starts a marked S-mode squad run, records worker start/finish intervals and tool-call receipts, captures the Lead result, invokes both bridge directions when AVRONE is configured, and writes:
+- `data/observations/latest.md` — readable node/server/environment findings, agent bridge posts, gaps, and conclusions.
+- `data/observations/latest.json` — structured evidence and per-probe failures.
+
+The observer does not dump the environment or tool arguments and redacts obvious credentials from recorded excerpts. It fails closed when configured workers, real overlap evidence, or bridge receipts are missing. No bridge is declared live without a successful response/receipt.
+
 ## The agents' evolution loop
 
 The agents evolve through their own runs — the same sequential process that built the system:

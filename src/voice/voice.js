@@ -3,7 +3,7 @@
 // Core-only mode can still use a locally installed Piper CLI when configured.
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,7 +29,6 @@ async function transcribeLocal(wavBuffer) {
   const dir = mkdtempSync(join(tmpdir(), "grok-whisper-"));
   const input = join(dir, "input.wav");
   try {
-    const { writeFileSync } = await import("node:fs");
     writeFileSync(input, wavBuffer);
     return await new Promise((resolve, reject) => {
       const p = spawn("whisper-cli", ["-m", "/models/whisper-base.bin", "-f", input, "-nt"], { stdio: ["ignore", "pipe", "ignore"] });

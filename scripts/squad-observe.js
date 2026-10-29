@@ -16,7 +16,9 @@ const snapshot = { createdAt: new Date().toISOString(), marker, expectedWorkers:
   nodeRuntime: null, grokBot: null, governor: null, containers: null, avrone: null, grokSquad: null,
   grokToAvrone: { configured: !!AVRONE, ok: false, error: AVRONE ? "Forward bridge not attempted yet." : "AVRONE_URL is not configured." },
   avroneToGrok: { configured: !!AVRONE, ok: false, error: AVRONE ? "Reverse bridge not attempted yet." : "AVRONE_URL is not configured." },
-  avroneSquadTrace: null, afunction redact(value, cap = 3000) {
+  avroneSquadTrace: null, avroneReverseTrace: null, bridgeReceipts: [], conclusions: [] };
+
+function redact(value, cap = 3000) {
   return safeToolTraceText(value, cap);
 }
 

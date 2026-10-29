@@ -61,31 +61,56 @@ async def t_osint_domain(ctx: "AgentContext", args: dict[str, Any]) -> str:
             f"\n[Subdomains] {sub_count or ct[:200]}")
 
 
+# Bound the aggregate view so a damaged or unexpectedly large log directory
+# cannot turn a read-only metrics call into an unbounded memory/CPU job.
+MAX_METRIC_LOG_FILES = 1000
+MAX_METRIC_LOG_BYTES = 8 * 1024 * 1024
+
+
 async def t_osint_metrics(ctx: "AgentContext", args: dict[str, Any]) -> str:
-    """Roll up recon/OSINT activity from the Codex run logs: tool counts and top targets."""
+    """Roll up recon/OSINT activity from Codex logs, skipping malformed records safely."""
     data_dir = Path(ctx.core.settings.data_dir)
     log_dir = data_dir / "runs"
     kinds = Counter()
     hosts = Counter()
     refused = Counter()
     runs = 0
-    if log_dir.exists():
-        for p in log_dir.glob("*.jsonl"):
-            runs += 1
-            for line in p.read_text().splitlines():
-                try:
-                    ev = json.loads(line)
-                except ValueError:
-                    continue
-                k = ev.get("kind", "")
-                if k == recon.REFUSED_KIND:  # refusals are audited, not probes
-                    refused[(ev.get("data") or {}).get("tool", "?")] += 1
-                    continue
-                if k.startswith(("recon.", "osint.")):
-                    kinds[k] += 1
-                    h = (ev.get("data") or {}).get("host")
-                    if h:
-                        hosts[h] += 1
+    try:
+        files = sorted(log_dir.glob("*.jsonl"))[:MAX_METRIC_LOG_FILES] if log_dir.is_dir() else []
+    except OSError:
+        files = []
+    for p in files:
+        try:
+            if not p.is_file() or p.stat().st_size > MAX_METRIC_LOG_BYTES:
+                continue
+            content = p.read_text(errors="replace")
+        except OSError:
+            continue
+        runs += 1
+        for line in content.splitlines():
+            try:
+                ev = json.loads(line)
+            except (ValueError, TypeError, RecursionError):
+                continue
+            # JSON permits any root value; only event objects belong in the ledger.
+            if not isinstance(ev, dict):
+                continue
+            k = ev.get("kind", "")
+            if not isinstance(k, str):
+                continue
+            data = ev.get("data")
+            data = data if isinstance(data, dict) else {}
+            if k == recon.REFUSED_KIND:  # refusals are audited, not probes
+                tool = data.get("tool", "?")
+                if not isinstance(tool, str) or not tool.strip():
+                    tool = "?"
+                refused[tool[:80]] += 1
+                continue
+            if k.startswith(("recon.", "osint.")):
+                kinds[k[:120]] += 1
+                host = data.get("host")
+                if isinstance(host, str) and host.strip():
+                    hosts[host.strip()[:253]] += 1
     if not kinds and not refused:
         return "no recon/OSINT activity recorded yet"
     lines = [f"recon/OSINT metrics across {runs} run logs", "", "by tool:"]
@@ -97,7 +122,6 @@ async def t_osint_metrics(ctx: "AgentContext", args: dict[str, Any]) -> str:
         lines += [f"refused by guardrails: {sum(refused.values())} "
                   f"({', '.join(f'{t}: {n}' for t, n in refused.most_common())})"]
     return "\n".join(lines)
-
 
 OSINT_TOOLS = [
     ("osint_domain", "aggregate one domain's public footprint (DNS, TLS, HTTP, certificate-transparency subdomains) "

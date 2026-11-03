@@ -76,6 +76,47 @@ test("coordinator claim validation rejects malformed identities before network a
   assert.equal(calls, 0);
 });
 
+test("executor enforces its concurrency ceiling and releases slots after completion", async () => {
+  let release;
+  let started;
+  const startedPromise = new Promise(resolve => { started = resolve; });
+  const execute = createSwarmExecutor({
+    tools: [], executorId: "spiffe://test/executor", privateKeyPem: privatePem, maxConcurrency: 1,
+    runAgent: async () => {
+      started();
+      await new Promise(resolve => { release = resolve; });
+      return "diagnostic output from a constrained test executor";
+    }
+  });
+  const first = execute({ jobId: "capacity-1", tenant: "test-tenant", role: "debugger", objective: "Inspect." });
+  await startedPromise;
+  const second = await execute({ jobId: "capacity-2", tenant: "test-tenant", role: "debugger", objective: "Inspect." });
+  assert.equal(second.status, 429);
+  release();
+  await first;
+  const third = await execute({ jobId: "capacity-3", tenant: "test-tenant", role: "debugger", objective: "Inspect." });
+  assert.equal(third.status, 422);
+});
+
+test("executor excludes browser and mutating task-board tools from specialist runtime", async () => {
+  let names = [];
+  const execute = createSwarmExecutor({
+    tools: [
+      { name: "terminal", run: async () => ({ ok: true, stdout: "pwd", stderr: "" }) },
+      { name: "browser", run: async () => ({ ok: true }) },
+      { name: "task.board", run: async () => ({ ok: true }) }
+    ],
+    executorId: "spiffe://test/executor", privateKeyPem: privatePem,
+    runAgent: async (_agent, _prompt, tools) => {
+      names = tools.map(tool => tool.name);
+      await tools[0].run({ command: "pwd" });
+      return "diagnostic output from terminal inspection";
+    }
+  });
+  await execute({ jobId: "tool-filter", tenant: "test-tenant", role: "debugger", objective: "Inspect." });
+  assert.deepEqual(names, ["terminal"]);
+});
+
 test("tenant-scoped workspaces do not collide for identical job IDs", async () => {
   const workspaceNames = [];
   const execute = createSwarmExecutor({

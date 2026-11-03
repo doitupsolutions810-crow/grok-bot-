@@ -46,7 +46,7 @@ function rolePrompt(role, objective, defaultRepository, defaultBranch) {
     debugger: `${shared}\nReproduce the issue where possible, inspect logs and source, identify a root cause, and state a concrete reproduction procedure. Do not patch unless the task explicitly asks you to.`,
     coder: `${shared}\nImplement the requested change in the workspace. Make the smallest coherent patch, inspect the diff, run relevant syntax checks, and list changed artifacts. Do not report success if no file was changed.`,
     tester: `${shared}\nIndependently run the relevant test suite and edge cases. Do not change implementation files. Report exact test commands and exit codes. A test pass requires an actually executed command with exit code zero.`,
-    governance: `${shared}\nIndependently inspect the workspace, changed files, diffs, hashes and test evidence. Re-run or inspect tests where possible. Finish with exactly one final line: DECISION: APPROVE or DECISION: REJECT. Approve only if the implementation and evidence are independently verifiable; otherwise reject and explain gaps.`
+    governance: `${shared}\nIndependently inspect the workspace, changed files, diffs, hashes and test evidence. Re-run or inspect tests where possible. Your signed report will include the independently collected changed-file SHA-256 inventory and each test command/exit code you ran. Finish with exactly one final line: DECISION: APPROVE or DECISION: REJECT. Approve only if the implementation and evidence are independently verifiable; otherwise reject and explain gaps.`
   };
   return prompts[role];
 }
@@ -160,6 +160,8 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
       const approved = /(?:^|\n)\s*DECISION:\s*APPROVE\s*$/i.test(answerText);
       report = {
         decision: approved && successfulTerminal && artifacts.length > 0 && tests.some(test => test.exit_code === 0) ? "approve" : "reject",
+        artifact_inventory: artifacts,
+        test_commands: tests,
         checks: [
           { name: "successful terminal execution", passed: successfulTerminal },
           { name: "artifact inventory", passed: artifacts.length > 0 },

@@ -5,15 +5,63 @@
       "id": "grok-main",
       "name": "Grok Main",
       "systemPrompt": "You are Grok Bot, the chief of staff — sharp, proactive, maximum-agency. Use tools whenever they help; work end-to-end and return finished work. Delegate to teammates with team.ask or team.spawn when a specialist fits the job.",
-      "tools": ["*"],
+      "tools": [
+        "*"
+      ],
       "model": "qwen2.5:3b"
     },
     {
       "id": "grok-researcher",
       "name": "Grok Researcher",
       "systemPrompt": "You research topics using the browser. Cite sources with URLs.",
-      "tools": ["browser", "web.fetch"],
+      "tools": [
+        "browser",
+        "web.fetch"
+      ],
       "model": "qwen2.5:3b"
+    },
+    {
+      "id": "swarm-debugger",
+      "name": "Swarm Debugger",
+      "systemPrompt": "You are the debugger specialist in a four-role software execution pipeline. Work only in the per-job shared sandbox. Reproduce the objective with real terminal/browser tools, inspect failures, and do not modify source files. Return exactly one JSON object: {\"diagnosis\":\"...\",\"reproduction\":\"...\"}. Do not claim success unless you executed at least one relevant tool successfully. If you cannot reproduce or lack evidence, say so in the JSON and do not invent output.",
+      "tools": [
+        "terminal",
+        "web.fetch"
+      ],
+      "model": "qwen2.5:3b",
+      "mode": "chat"
+    },
+    {
+      "id": "swarm-coder",
+      "name": "Swarm Coder",
+      "systemPrompt": "You are the coder specialist. Work in the same per-job shared sandbox as the other roles. Implement the smallest safe patch for the approved objective. Run a real command to inspect the diff and compute SHA-256 for every changed artifact. Return exactly one JSON object: {\"artifacts\":[{\"path\":\"relative/path\",\"sha256\":\"sha256:<64 lowercase hex>\"}]}. Do not claim a file changed unless you changed and hashed it. Never modify files outside the job workspace.",
+      "tools": [
+        "terminal",
+        "web.fetch"
+      ],
+      "model": "qwen2.5:3b",
+      "mode": "chat"
+    },
+    {
+      "id": "swarm-tester",
+      "name": "Swarm Tester",
+      "systemPrompt": "You are the tester specialist. Independently inspect the coder's changed files in the shared per-job workspace. Run the relevant tests and record the exact command and real exit code. Return exactly one JSON object: {\"tests\":[{\"command\":\"...\",\"exit_code\":0}]}. Do not claim tests passed unless the terminal tool returned exit code zero. If tests fail, report the actual nonzero exit code.",
+      "tools": [
+        "terminal"
+      ],
+      "model": "qwen2.5:3b",
+      "mode": "chat"
+    },
+    {
+      "id": "swarm-governance",
+      "name": "Swarm Governance",
+      "systemPrompt": "You are the independent governance specialist. Review the debugger diagnosis, coder artifacts and tester results in the shared per-job workspace. Verify artifact hashes and test evidence yourself using tools. Approve only if the objective is satisfied, changes are scoped, and all evidence checks pass. Return exactly one JSON object: {\"decision\":\"approve\"|\"reject\",\"checks\":[{\"name\":\"...\",\"passed\":true|false}]}. Do not approve based only on another agent's narrative.",
+      "tools": [
+        "terminal",
+        "web.fetch"
+      ],
+      "model": "qwen2.5:3b",
+      "mode": "chat"
     }
   ],
   "bots": [
@@ -21,7 +69,12 @@
       "id": "researcher",
       "name": "Researcher",
       "job": "Deep research on any topic: find sources, verify claims, write a cited brief",
-      "tools": ["browser", "web.fetch", "rag.search", "team.spawn"],
+      "tools": [
+        "browser",
+        "web.fetch",
+        "rag.search",
+        "team.spawn"
+      ],
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": false,
@@ -31,7 +84,11 @@
       "id": "inbox-manager",
       "name": "Inbox Manager",
       "job": "Read and triage incoming messages and mentions, flag what needs a human",
-      "tools": ["browser", "web.fetch", "terminal"],
+      "tools": [
+        "browser",
+        "web.fetch",
+        "terminal"
+      ],
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": false,
@@ -41,7 +98,12 @@
       "id": "bug-fixer",
       "name": "Bug Fixer",
       "job": "Reproduce reported bugs in the sandbox, diagnose the cause, propose a patch",
-      "tools": ["terminal", "browser", "web.fetch", "task.board"],
+      "tools": [
+        "terminal",
+        "browser",
+        "web.fetch",
+        "task.board"
+      ],
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": true,
@@ -52,7 +114,11 @@
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/data"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/app/data"
+      ]
     }
   }
 }

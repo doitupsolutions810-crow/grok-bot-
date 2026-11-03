@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import {
   loadAgents, listBots, findAgent, runAgent, runOrchestrated,
   thinkAnswer, deepSearch, runSquad, runDeep,
@@ -17,9 +18,12 @@ import {
 } from "./observability/traces.js";
 import { transcribe, speak } from "./voice/voice.js";
 import { visionTool } from "./tools/vision.js";
+import { buildSwarmEvidence } from "./agents/swarm-evidence.js";
+import { emit } from "./agents/codex.js";
 
 export function makeRouter({ tools, docker }) {
   const r = Router();
+  const swarmActiveRuns = new Set();
   const { agents } = loadAgents();
   const find = id => findAgent(id) || agents["grok-main"];
 
@@ -42,6 +46,110 @@ export function makeRouter({ tools, docker }) {
     await remember(session, "assistant", answer);
     return { agent, answer };
   };
+
+  r.post("/swarm/execute", async (req, res) => {
+    const { jobId, role, objective } = req.body || {};
+    if (typeof jobId !== "string" || !/^[A-Za-z0-9_.-]{1,80}$/.test(jobId)
+        || !["debugger", "coder", "tester", "governance"].includes(role)
+        || typeof objective !== "string" || !objective.trim() || objective.length > 2000) {
+      return res.status(400).json({ error: "jobId, specialist role and 1..2000 character objective are required" });
+    }
+    const roleTokenNames = ["DEBUGGER", "CODER", "TESTER", "GOVERNANCE"].map((name) => "SWARM_EXECUTOR_" + name + "_TOKEN");
+    const configuredRoleTokens = roleTokenNames.map((name) => process.env[name] || "");
+    if (configuredRoleTokens.some((token) => token.length < 32) || new Set(configuredRoleTokens).size !== 4) {
+      return res.status(503).json({ error: "four distinct role-scoped Grok Bot executor tokens must be configured" });
+    }
+    const tokenName = "SWARM_EXECUTOR_" + role.toUpperCase() + "_TOKEN";
+    const expectedToken = process.env[tokenName];
+    const supplied = /^Bearer (.+)$/.exec(req.headers.authorization || "")?.[1] || "";
+    const expectedBytes = Buffer.from(expectedToken);
+    const suppliedBytes = Buffer.from(supplied);
+    if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
+      return res.status(401).json({ error: "unauthorized specialist executor" });
+    }
+    const executor = process.env.SWARM_EXECUTOR_ID || "";
+    const keyFile = process.env.SWARM_EXECUTOR_SIGNING_KEY_FILE || "";
+    if (!executor.startsWith("spiffe://") || !keyFile) return res.status(503).json({ error: "SPIFFE executor identity and Ed25519 signing key file are required" });
+    let signingKeyPem;
+    try {
+      if ((statSync(keyFile).mode & 0o077) !== 0) return res.status(503).json({ error: "executor private key permissions must be owner-only" });
+      signingKeyPem = readFileSync(keyFile);
+    } catch (error) {
+      return res.status(503).json({ error: "executor private key file is unavailable" });
+    }
+    const roleAgentIds = {
+      debugger: process.env.SWARM_DEBUGGER_AGENT_ID || "swarm-debugger",
+      coder: process.env.SWARM_CODER_AGENT_ID || "swarm-coder",
+      tester: process.env.SWARM_TESTER_AGENT_ID || "swarm-tester",
+      governance: process.env.SWARM_GOVERNANCE_AGENT_ID || "swarm-governance",
+    };
+    const agentId = roleAgentIds[role];
+    const agent = findAgent(agentId);
+    if (!agent || agent.id !== agentId) return res.status(503).json({ error: "configured specialist agent is missing: " + agentId });
+    const slug = ("swarm-" + jobId).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 48);
+    const runId = "swarm-" + jobId + "-" + role;
+    const prior = replay(runId);
+    const cached = prior?.events?.findLast((event) => event.kind === "swarm.result")?.result;
+    if (cached) return res.status(cached.status === "succeeded" ? 200 : 422).json({ ...cached, cached: true });
+    if (swarmActiveRuns.has(runId)) return res.status(202).json({ status: "running", run_id: runId });
+    swarmActiveRuns.add(runId);
+    try {
+    const startedAt = new Date().toISOString();
+    const configuredMaxSteps = Number(process.env.SWARM_AGENT_MAX_STEPS || 12);
+    const maxSteps = Number.isFinite(configuredMaxSteps) ? Math.max(1, Math.min(20, Math.trunc(configuredMaxSteps))) : 12;
+    const prompt = [
+      "You are executing one specialist stage of a real AVRONE/Swarm software job.",
+      "Work only in your persistent per-job sandbox workspace. Do not claim actions you did not execute.",
+      "Use your actual tools. Do not reveal or search for secrets. Do not access host paths or Docker socket.",
+      "Return exactly one JSON object matching your role's required evidence schema. No markdown fences.",
+      "Job ID: " + jobId,
+      "Role: " + role,
+      "Objective: " + objective,
+      role === "debugger" ? 'Required JSON: {"diagnosis":"...","reproduction":"..."}. Reproduce with a real tool call.' :
+      role === "coder" ? 'Required JSON: {"artifacts":[{"path":"relative/path","sha256":"sha256:<64 lowercase hex>"}]}. Patch only scoped files and hash every changed artifact.' :
+      role === "tester" ? 'Required JSON: {"tests":[{"command":"exact command","exit_code":0}]}. Run actual tests and report actual exit codes.' :
+      'Required JSON: {"decision":"approve|reject","checks":[{"name":"...","passed":true}]}. Independently inspect the work and verify artifact hashes and tests.'
+    ].join("\n\n");
+    let answer;
+    try {
+      answer = await runAgent(agent, prompt, tools, {
+        runId,
+        agentName: slug,
+        maxSteps,
+      });
+      if (answer && typeof answer === "object" && answer.pendingApproval) {
+        answer = JSON.stringify({ blocked: "human approval required; no specialist success asserted" });
+      }
+    } catch (error) {
+      answer = JSON.stringify({ error: String(error?.message || error) });
+    }
+    const completedAt = new Date().toISOString();
+    const trace = replay(runId);
+    let signed;
+    try {
+      signed = buildSwarmEvidence({
+        jobId, role, executor, runId, answer,
+        events: trace?.events || [], startedAt, completedAt,
+        privateKeyPem: signingKeyPem,
+      });
+    } catch (error) {
+      return res.status(503).json({ error: "could not create signed execution evidence: " + String(error?.message || error) });
+    }
+    const result = {
+      status: signed.evidence.status,
+      answer: typeof answer === "string" ? answer : JSON.stringify(answer),
+      evidence: signed.evidence,
+      evidence_signature: signed.signature,
+      cached: false,
+    };
+    emit(runId, "swarm.result", { result });
+    const persisted = replay(runId)?.events?.findLast((event) => event.kind === "swarm.result")?.result;
+    if (!persisted) return res.status(503).json({ error: "signed execution result could not be persisted to CodeX" });
+    return res.status(persisted.status === "succeeded" ? 200 : 422).json(persisted);
+    } finally {
+      swarmActiveRuns.delete(runId);
+    }
+  });
 
   r.get("/health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   r.get("/docker/containers", async (req, res) => {

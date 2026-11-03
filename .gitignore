@@ -2,6 +2,8 @@ node_modules
 .env
 data/
 models/
+secrets/
+.secrets/
 voices/
 tests/status.json
 *.log

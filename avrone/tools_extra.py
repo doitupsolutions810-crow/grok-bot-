@@ -1144,6 +1144,79 @@ async def t_priv_admin(ctx: "AgentContext", args: dict[str, Any]) -> str:
     return text[:PRIV_ADMIN_MAX_CHARS] + ("\n...[truncated]" if len(text) > PRIV_ADMIN_MAX_CHARS else "")
 
 
+def _preflight_path(raw_path: Any, label: str) -> dict[str, Any]:
+    """Read-only path readiness check. Never creates files or changes permissions."""
+    try:
+        path = Path(raw_path or ".").expanduser().resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return {"label": label, "path": "(invalid)", "exists": False, "is_directory": False,
+                "writable_or_creatable": False, "free_bytes": None, "ready": False}
+    exists = path.exists()
+    is_dir = exists and path.is_dir()
+    # A missing directory is creatable when its nearest existing ancestor is writable.
+    probe = path if is_dir else path.parent
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    writable = False
+    free_bytes = None
+    try:
+        if probe.exists() and probe.is_dir():
+            writable = bool(os.access(path if is_dir else probe, os.W_OK))
+            free_bytes = shutil.disk_usage(probe).free
+    except OSError:
+        writable = False
+    ready = (is_dir and writable) or (not exists and writable)
+    return {
+        "label": label, "path": str(path), "exists": exists, "is_directory": is_dir,
+        "writable_or_creatable": writable, "free_bytes": free_bytes, "ready": bool(ready),
+    }
+
+
+async def t_runtime_preflight(ctx: "AgentContext", args: dict[str, Any]) -> str:
+    """Read-only node preflight: paths, disk headroom, runner identity, and bounded settings."""
+    if not isinstance(args, dict):
+        return "ERROR: args must be a JSON object"
+    core = getattr(ctx, "core", None)
+    settings = getattr(core, "settings", None)
+    runner = getattr(core, "runner", None)
+    workspace = getattr(runner, "workspace", getattr(settings, "workspace", "."))
+    data_dir = getattr(settings, "data_dir", "./data")
+    paths = [_preflight_path(workspace, "workspace"), _preflight_path(data_dir, "data_dir")]
+    limits = {}
+    for key, default in (
+        ("max_parallel", 1), ("max_steps", 1), ("max_spawn_depth", 0),
+        ("agent_timeout", 0), ("command_timeout", 120), ("thermal_max_c", 85),
+    ):
+        value = getattr(settings, key, default)
+        limits[key] = value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+    report = {
+        "ready": all(p["ready"] for p in paths),
+        "runtime": {
+            "configured_runner": getattr(settings, "runner", "unknown"),
+            "runner_adapter": type(runner).__name__ if runner is not None else "unavailable",
+            "network_enabled": bool(getattr(settings, "allow_network", False)),
+            "agent_shell_enabled": bool(getattr(settings, "agents_can_shell", False)),
+            "governor_enabled": bool(getattr(settings, "governor", True)),
+        },
+        "paths": paths,
+        "limits": limits,
+        "warnings": [f"{p['label']} is not writable or creatable" for p in paths if not p["ready"]],
+        "note": "Read-only probe; it does not create directories, start containers, or change privileges.",
+    }
+    if str(args.get("format", "text")).lower() == "json":
+        return json.dumps(report, ensure_ascii=False, indent=2)
+    lines = [f"runtime preflight: {'READY' if report['ready'] else 'NEEDS ATTENTION'}"]
+    lines.append(f"runner: {report['runtime']['configured_runner']} ({report['runtime']['runner_adapter']})")
+    for p in paths:
+        free = f", free={p['free_bytes'] // (1024 * 1024)} MiB" if p["free_bytes"] is not None else ""
+        lines.append(f"{p['label']}: {'ok' if p['ready'] else 'blocked'} "
+                     f"(exists={p['exists']}, writable_or_creatable={p['writable_or_creatable']}{free})")
+    lines.append("limits: " + ", ".join(f"{k}={v}" for k, v in limits.items()))
+    lines.extend(f"warning: {w}" for w in report["warnings"])
+    lines.append(report["note"])
+    return "\n".join(lines)
+
+
 EXTRA_TOOLS: list[tuple[str, str, str, Any]] = [
     ("web_search", "search the web (DuckDuckGo by default; Brave/Tavily if API keys set); returns numbered title/url/snippet results.",
      '{"query": str, "max_results"?: int}', t_web_search),
@@ -1177,6 +1250,8 @@ EXTRA_TOOLS: list[tuple[str, str, str, Any]] = [
      '{"path_a": str, "path_b"?: str, "text_b"?: str, "context"?: int}', t_diff_files),
     ("codex_search", "read-only search of the Eternal CodeX run logs by event kind (exact, or prefix ending in '.'/'*'), agent, tool name, substring and/or run_id; newest first, bounded.",
      '{"kind"?: str, "agent"?: str, "tool"?: str, "query"?: str, "run_id"?: str, "limit"?: int, "runs"?: int}', t_codex_search),
+    ("runtime_preflight", "read-only readiness check for workspace/data paths, free disk, runner identity, and bounded settings; never modifies state.",
+     '{"format"?: "text"|"json"}', t_runtime_preflight),
     ("self_scan", "read-only inventory of YOUR OWN environment: OS/arch/python, host, cwd/workspace writability, runner, docker, AVRONE toggles, tool count, own network interfaces; secret env values redacted.",
      '{"format"?: "text"|"json"}', t_self_scan),
     ("capabilities_report", "read-only plain-English ledger of what YOU can and cannot do under current settings (shell, docker, network, recon+allowlist, self-evolve, self-changes, workspace write, admin); for squad reviews.",

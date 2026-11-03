@@ -25,6 +25,7 @@ export const terminalTool = {
       }, (err, stdout, stderr) => {
         resolve({
           ok: !err,
+          exitCode: Number.isInteger(err?.code) ? err.code : err ? 127 : 0,
           cwd: home,
           stdout: stdout.slice(0, 8000),
           stderr: (stderr || err?.message || "").slice(0, 4000)

@@ -100,6 +100,33 @@ test("governance approves only with explicit decision, tests and artifacts", asy
   assert.ok(out.body.evidence.report.checks.every(check => check.passed));
 });
 
+test("propagates cancellation into the live agent runtime and fails closed", async () => {
+  const controller = new AbortController();
+  let receivedSignal;
+  const execute = createSwarmExecutor({
+    tools: [], executorId: "spiffe://test/executor", privateKeyPem: privatePem,
+    runAgent: async (_agent, _prompt, _tools, options) => {
+      receivedSignal = options.signal;
+      throw new Error("agent execution aborted");
+    }
+  });
+  controller.abort();
+  await assert.rejects(() => execute({ jobId: "job-cancel", role: "debugger", objective: "Inspect the task.", signal: controller.signal }), /execution aborted before start/);
+  assert.equal(receivedSignal, undefined);
+  const active = new AbortController();
+  const executeActive = createSwarmExecutor({
+    tools: [], executorId: "spiffe://test/executor", privateKeyPem: privatePem,
+    runAgent: async (_agent, _prompt, _tools, options) => {
+      receivedSignal = options.signal;
+      throw new Error("agent execution aborted");
+    }
+  });
+  const out = await executeActive({ jobId: "job-cancel-2", role: "debugger", objective: "Inspect the task.", signal: active.signal });
+  assert.equal(receivedSignal, active.signal);
+  assert.equal(out.status, 422);
+  assert.equal(out.body.evidence.status, "failed");
+});
+
 test("rejects malformed job IDs, roles, objectives and non-Ed25519 keys", async () => {
   const { execute } = harness({ role: "debugger" });
   await assert.rejects(() => execute({ jobId: "../escape", role: "debugger", objective: "ok" }), /invalid jobId/);

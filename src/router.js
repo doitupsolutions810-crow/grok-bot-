@@ -54,10 +54,14 @@ export function makeRouter({ tools, docker }) {
         || typeof objective !== "string" || !objective.trim() || objective.length > 2000) {
       return res.status(400).json({ error: "jobId, specialist role and 1..2000 character objective are required" });
     }
+    const roleTokenNames = ["DEBUGGER", "CODER", "TESTER", "GOVERNANCE"].map((name) => "SWARM_EXECUTOR_" + name + "_TOKEN");
+    const configuredRoleTokens = roleTokenNames.map((name) => process.env[name] || "");
+    if (configuredRoleTokens.some((token) => token.length < 32) || new Set(configuredRoleTokens).size !== 4) {
+      return res.status(503).json({ error: "four distinct role-scoped Grok Bot executor tokens must be configured" });
+    }
     const tokenName = "SWARM_EXECUTOR_" + role.toUpperCase() + "_TOKEN";
-    const expectedToken = process.env[tokenName] || "";
+    const expectedToken = process.env[tokenName];
     const supplied = /^Bearer (.+)$/.exec(req.headers.authorization || "")?.[1] || "";
-    if (expectedToken.length < 32) return res.status(503).json({ error: "role-scoped Grok Bot executor token is not configured" });
     const expectedBytes = Buffer.from(expectedToken);
     const suppliedBytes = Buffer.from(supplied);
     if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {

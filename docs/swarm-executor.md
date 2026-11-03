@@ -1,6 +1,6 @@
 # Grok Bot specialist executor
 
-Grok Bot exposes `POST /api/swarm/execute` only when `SWARM_EXECUTOR_TOKEN` is configured. The endpoint selects one of four dedicated agents, runs it in the shared per-job sandbox workspace, records real tool exit status and output digests in CodeX, and signs the resulting role evidence with Ed25519. A role cannot pass without successful tool execution and its role-specific structured report.
+Grok Bot exposes `POST /api/swarm/execute` only when the matching role-scoped `SWARM_EXECUTOR_<ROLE>_TOKEN` is configured. The endpoint selects one of four dedicated agents, runs it in the shared per-job sandbox workspace, records real tool exit status and output digests in CodeX, and signs the resulting role evidence with Ed25519. A role cannot pass without successful tool execution and its role-specific structured report.
 
 ## Provisioning
 

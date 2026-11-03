@@ -8,14 +8,7 @@ import { chatRoute } from "../llm/router.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
 import { emit } from "./codex.js";
 import { createHash } from "node:crypto";
-
-export function toolSucceeded(name, result) {
-  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
-  if (name === "terminal") return result.ok === true && result.exitCode === 0 && !result.error;
-  if (name === "web.fetch") return Number.isInteger(result.status) && result.status >= 200 && result.status < 300 && typeof result.content === "string" && !result.error;
-  if (name === "browser") return typeof result.url === "string" && typeof result.content === "string" && !result.error;
-  return result.isError !== true && result.ok !== false && !result.error && (result.ok === true || Array.isArray(result.content));
-}
+import { toolSucceeded } from "./tool-outcome.js";
 
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;

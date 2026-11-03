@@ -61,6 +61,21 @@ test("terminal timeout also requests remote process-group cleanup", async () => 
   assert.match(calls[1][4], /timeout-fixed-id\.cancel/);
 });
 
+test("ordinary nonzero command exit does not create a stale cancellation marker", async () => {
+  const calls = [];
+  const exitError = Object.assign(new Error("command exited 1"), { code: 1, killed: false });
+  const tool = createTerminalTool({
+    uuid: () => "normal-failure-id",
+    execFileImpl: (_file, args, _options, callback) => {
+      calls.push(args);
+      callback(exitError, "", "test failed");
+    }
+  });
+  const result = await tool.run({ command: "npm test" }, { agent: "job-c" });
+  assert.equal(result.ok, false);
+  assert.equal(calls.length, 1);
+});
+
 test("terminal rejects empty and oversized commands without starting Docker", async () => {
   let calls = 0;
   const tool = createTerminalTool({ execFileImpl: () => { calls++; } });

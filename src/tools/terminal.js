@@ -21,7 +21,7 @@ export const terminalTool = {
     const wrapped = `mkdir -p ${home} && cd ${home} && ${command}`;
     return await new Promise(resolve => {
       execFile("docker", ["exec", container, "sh", "-lc", wrapped], {
-        timeout: 30_000, maxBuffer: 1024 * 1024
+        timeout: 30_000, maxBuffer: 1024 * 1024, signal: ctx?.signal
       }, (err, stdout, stderr) => {
         resolve({
           ok: !err,

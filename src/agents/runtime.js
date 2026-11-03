@@ -7,6 +7,7 @@
 import { chatRoute } from "../llm/router.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
 import { emit } from "./codex.js";
+import { createHash } from "node:crypto";
 
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;
@@ -53,7 +54,17 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
       } catch (e) {
         result = { error: e.message };
       }
-      emit(opts.runId, "tool.result", { agent: ctx.agent, tool: name, ok: !result?.error });
+      const stdout = typeof result?.stdout === "string" ? result.stdout : "";
+      const stderr = typeof result?.stderr === "string" ? result.stderr : "";
+      const toolOk = result?.ok !== false && !result?.error;
+      emit(opts.runId, "tool.result", {
+        agent: ctx.agent,
+        tool: name,
+        ok: toolOk,
+        exitCode: Number.isInteger(result?.exitCode) ? result.exitCode : toolOk ? 0 : null,
+        stdout_sha256: stdout ? "sha256:" + createHash("sha256").update(stdout, "utf8").digest("hex") : null,
+        stderr_sha256: stderr ? "sha256:" + createHash("sha256").update(stderr, "utf8").digest("hex") : null,
+      });
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }
   }

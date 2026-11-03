@@ -56,14 +56,22 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
       }
       const stdout = typeof result?.stdout === "string" ? result.stdout : "";
       const stderr = typeof result?.stderr === "string" ? result.stderr : "";
-      const toolOk = result?.ok !== false && !result?.error;
+      // Tool success is adapter-specific. Unknown shapes and missing status are failures.
+      const toolOk = name === "terminal"
+        ? result?.ok === true && result?.exitCode === 0
+        : name === "web.fetch"
+          ? Number.isInteger(result?.status) && result.status >= 200 && result.status < 300 && typeof result.content === "string"
+          : name === "browser"
+            ? typeof result?.url === "string" && typeof result?.content === "string"
+            : Boolean(result && typeof result === "object" && result.isError !== true && result.ok !== false && !result.error);
       emit(opts.runId, "tool.result", {
         agent: ctx.agent,
         tool: name,
         ok: toolOk,
-        exitCode: Number.isInteger(result?.exitCode) ? result.exitCode : toolOk ? 0 : null,
+        exitCode: name === "terminal" && Number.isInteger(result?.exitCode) ? result.exitCode : null,
         stdout_sha256: stdout ? "sha256:" + createHash("sha256").update(stdout, "utf8").digest("hex") : null,
         stderr_sha256: stderr ? "sha256:" + createHash("sha256").update(stderr, "utf8").digest("hex") : null,
+        result_sha256: result && typeof result === "object" ? "sha256:" + createHash("sha256").update(JSON.stringify(result), "utf8").digest("hex") : null,
       });
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }

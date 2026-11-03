@@ -125,7 +125,7 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
       try {
         const inventory = await terminal.run({
           command: "git rev-parse --is-inside-work-tree >/dev/null && { git diff --name-only -z HEAD; git ls-files --others --exclude-standard -z; } | xargs -0 -r sha256sum"
-        }, { agent: workspaceAgent });
+        }, { agent: workspaceAgent, signal });
         const stdout = String(inventory?.stdout ?? "");
         const stderr = String(inventory?.stderr ?? inventory?.error ?? "");
         captured.push({ tool: "terminal", ok: inventory?.ok === true, exitCode: inventory?.ok === true ? 0 : 1, stdout_sha256: sha(stdout), stderr_sha256: sha(stderr), command: "git diff and untracked artifact inventory" });

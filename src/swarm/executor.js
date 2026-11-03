@@ -2,7 +2,7 @@ import { createHash, createPrivateKey, randomUUID, sign, timingSafeEqual } from 
 import { readFileSync } from "node:fs";
 
 const ROLES = new Set(["debugger", "coder", "tester", "governance"]);
-const ALLOWED_TOOLS = new Set(["terminal", "browser", "web.fetch", "rag.search", "task.board"]);
+const ALLOWED_TOOLS = new Set(["terminal", "web.fetch", "rag.search"]);
 const MAX_OBJECTIVE = 2000;
 const MAX_TOOL_RESULTS = 64;
 const MAX_ARTIFACTS = 50;
@@ -66,12 +66,14 @@ function parseArtifacts(stdout) {
   return rows;
 }
 
-export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem, defaultRepository = "", defaultBranch = "", now = () => Date.now() }) {
+export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem, defaultRepository = "", defaultBranch = "", maxConcurrency = 4, now = () => Date.now() }) {
   if (!Array.isArray(tools) || typeof runAgent !== "function") throw new TypeError("tools and runAgent are required");
   if (typeof executorId !== "string" || !executorId.trim()) throw new TypeError("executorId is required");
   if (typeof privateKeyPem !== "string" || !privateKeyPem.includes("BEGIN PRIVATE KEY")) throw new TypeError("Ed25519 private key is required");
   const privateKey = createPrivateKey(privateKeyPem);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new TypeError("executor signing key must be Ed25519");
+  if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 32) throw new TypeError("maxConcurrency must be an integer in 1..32");
+  let activeExecutions = 0;
 
   return async function execute({ jobId, tenant, role, objective, signal }) {
     if (typeof jobId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(jobId)) throw new TypeError("invalid jobId");
@@ -80,6 +82,9 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
     if (typeof objective !== "string" || !objective.trim() || objective.length > MAX_OBJECTIVE) throw new TypeError("objective must contain 1..2000 characters");
 
     if (signal?.aborted) throw new Error("execution aborted before start");
+    if (activeExecutions >= maxConcurrency) return { status: 429, body: { error: "specialist executor at capacity", retryable: true } };
+    activeExecutions += 1;
+    try {
     const startedAt = new Date(now()).toISOString();
     const runId = randomUUID();
     const workspaceAgent = safeWorkspaceId(tenant, jobId);
@@ -180,6 +185,9 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
     };
     const evidence_signature = sign(null, Buffer.from(canonicalJson(unsigned)), privateKey).toString("base64");
     return { status: status === "succeeded" ? 200 : 422, body: { evidence: unsigned, evidence_signature } };
+    } finally {
+      activeExecutions -= 1;
+    }
   };
 }
 

@@ -181,6 +181,47 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
   };
 }
 
+export async function validateCoordinatorClaim({
+  coordinatorUrl, role, jobId, workerId, claimToken, coordinatorToken,
+  fetchImpl = fetch, signal, timeoutMs = 10000
+}) {
+  if (!ROLES.has(role)) return { ok: false, status: 400, error: "invalid specialist role" };
+  if (typeof jobId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(jobId)) return { ok: false, status: 400, error: "invalid jobId" };
+  if (typeof workerId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId)) return { ok: false, status: 400, error: "invalid workerId" };
+  if (typeof claimToken !== "string" || claimToken.length < 32 || claimToken.length > 512) return { ok: false, status: 400, error: "invalid claimToken" };
+  if (typeof coordinatorToken !== "string" || coordinatorToken.length < 32 || coordinatorToken.length > 512) return { ok: false, status: 503, error: "coordinator credential is not configured" };
+  let url;
+  try {
+    url = new URL(String(coordinatorUrl || ""));
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("unsupported coordinator URL");
+    url.pathname = url.pathname.replace(/\\/+$/, "") + "/api/worker/" + role + "/validate";
+    url.search = "";
+    url.hash = "";
+  } catch {
+    return { ok: false, status: 503, error: "coordinator URL is invalid" };
+  }
+  try {
+    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+    const response = await fetchImpl(url.toString(), {
+      method: "POST",
+      headers: { authorization: "Bearer " + coordinatorToken, "content-type": "application/json" },
+      body: JSON.stringify({ jobId, workerId, claimToken }),
+      signal: requestSignal
+    });
+    if (!response.ok) {
+      const status = response.status === 401 ? 401 : response.status === 404 ? 404 : 409;
+      return { ok: false, status, error: "coordinator rejected specialist claim (" + response.status + ")" };
+    }
+    const body = await response.json();
+    if (body?.valid !== true || body.jobId !== jobId || body.role !== role || body.workerId !== workerId) {
+      return { ok: false, status: 409, error: "coordinator claim validation response did not match request" };
+    }
+    return { ok: true, status: 200, leaseExpiresAt: body.leaseExpiresAt };
+  } catch (error) {
+    return { ok: false, status: signal?.aborted ? 409 : 503, error: signal?.aborted ? "claim validation cancelled" : "coordinator claim validation unavailable" };
+  }
+}
+
 export function readPrivateKey(filePath) {
   if (typeof filePath !== "string" || !filePath.trim()) return "";
   return readFileSync(filePath, "utf8");

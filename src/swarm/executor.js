@@ -72,11 +72,12 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
   const privateKey = createPrivateKey(privateKeyPem);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new TypeError("executor signing key must be Ed25519");
 
-  return async function execute({ jobId, role, objective }) {
+  return async function execute({ jobId, role, objective, signal }) {
     if (typeof jobId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(jobId)) throw new TypeError("invalid jobId");
     if (!ROLES.has(role)) throw new TypeError("invalid specialist role");
     if (typeof objective !== "string" || !objective.trim() || objective.length > MAX_OBJECTIVE) throw new TypeError("objective must contain 1..2000 characters");
 
+    if (signal?.aborted) throw new Error("execution aborted before start");
     const startedAt = new Date(now()).toISOString();
     const runId = randomUUID();
     const workspaceAgent = safeWorkspaceId(jobId);
@@ -109,7 +110,7 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
         tools: wrappedTools.map(tool => tool.name), mode: "chat", review: false
       };
       const result = await runAgent(agent, objective, wrappedTools, {
-        runId, agentName: workspaceAgent, maxSteps: 16, spawnDepth: 0
+        runId, agentName: workspaceAgent, maxSteps: 16, spawnDepth: 0, signal
       });
       answer = typeof result === "string" ? result : JSON.stringify(result);
       if (result && typeof result === "object" && result.pendingApproval) runtimeError = "execution paused for human approval; unattended swarm cannot claim success";
@@ -120,7 +121,7 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
 
     let artifacts = [];
     const terminal = allowed.find(tool => tool.name === "terminal");
-    if (terminal && role !== "debugger") {
+    if (terminal && role !== "debugger" && !signal?.aborted) {
       try {
         const inventory = await terminal.run({
           command: "git rev-parse --is-inside-work-tree >/dev/null && { git diff --name-only -z HEAD; git ls-files --others --exclude-standard -z; } | xargs -0 -r sha256sum"

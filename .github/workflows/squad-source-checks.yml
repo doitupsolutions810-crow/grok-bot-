@@ -45,7 +45,7 @@ jobs:
           node --check src/tools/terminal.js
           node --check scripts/evolve.js
           node --check tests/live.test.js
-          node --check tests/swarm-evidence.unit.test.js
+          node --check src/agents/swarm-evidence.test.js
       - name: Validate Compose profiles
         run: docker compose config --quiet
       - name: Run deterministic Node tests

@@ -45,7 +45,7 @@ export function createTerminalTool({ execFileImpl = execFile, uuid = randomUUID 
         execFileImpl("docker", ["exec", container, "sh", "-lc", wrapped], {
           timeout: 30_000, maxBuffer: 1024 * 1024, signal: ctx?.signal
         }, (err, stdout = "", stderr = "") => {
-          if (err) cancel();
+          if (err && (ctx?.signal?.aborted || err.killed || err.signal || err.code === "ETIMEDOUT" || err.name === "AbortError")) cancel();
           ctx?.signal?.removeEventListener("abort", cancel);
           resolve({
             ok: !err,

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toolSucceeded } from "./runtime.js";
+import { toolSucceeded } from "./tool-outcome.js";
 
 test("terminal requires explicit success and zero exit code", () => {
   assert.equal(toolSucceeded("terminal", { ok: true, exitCode: 0 }), true);

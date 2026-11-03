@@ -47,19 +47,20 @@ export function makeRouter({ tools, docker }) {
   };
 
   r.post("/swarm/execute", async (req, res) => {
-    const expectedToken = process.env.SWARM_EXECUTOR_TOKEN || "";
-    const supplied = /^Bearer (.+)$/.exec(req.headers.authorization || "")?.[1] || "";
-    if (expectedToken.length < 32) return res.status(503).json({ error: "Swarm executor token is not configured" });
-    const expectedBytes = Buffer.from(expectedToken);
-    const suppliedBytes = Buffer.from(supplied);
-    if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
-      return res.status(401).json({ error: "unauthorized Swarm executor" });
-    }
     const { jobId, role, objective } = req.body || {};
     if (typeof jobId !== "string" || !/^[A-Za-z0-9_.-]{1,80}$/.test(jobId)
         || !["debugger", "coder", "tester", "governance"].includes(role)
         || typeof objective !== "string" || !objective.trim() || objective.length > 2000) {
       return res.status(400).json({ error: "jobId, specialist role and 1..2000 character objective are required" });
+    }
+    const tokenName = "SWARM_EXECUTOR_" + role.toUpperCase() + "_TOKEN";
+    const expectedToken = process.env[tokenName] || "";
+    const supplied = /^Bearer (.+)$/.exec(req.headers.authorization || "")?.[1] || "";
+    if (expectedToken.length < 32) return res.status(503).json({ error: "role-scoped Grok Bot executor token is not configured" });
+    const expectedBytes = Buffer.from(expectedToken);
+    const suppliedBytes = Buffer.from(supplied);
+    if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
+      return res.status(401).json({ error: "unauthorized specialist executor" });
     }
     const executor = process.env.SWARM_EXECUTOR_ID || "";
     const keyFile = process.env.SWARM_EXECUTOR_SIGNING_KEY_FILE || "";

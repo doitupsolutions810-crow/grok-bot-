@@ -63,7 +63,6 @@ services:
       - ./skills:/app/skills:ro               # SKILL.md playbooks
       - ${SWARM_EXECUTOR_SIGNING_KEY_HOST_FILE:-./secrets/grok-swarm-executor-ed25519.pem}:/run/secrets/grok-swarm-executor-ed25519.pem:ro
     depends_on: [ollama, browser, socket-proxy]
-    networks: [default, swarm-integration]
 
   ollama:
     image: ollama/ollama:latest
@@ -101,11 +100,6 @@ services:
     volumes:
       - comfyui_models:/home/user/comfyui/models
       - ./data/images:/output
-
-networks:
-  swarm-integration:
-    external: true
-    name: ${SWARM_INTEGRATION_NETWORK:-swarm-integration}
 
 volumes:
   ollama_models:

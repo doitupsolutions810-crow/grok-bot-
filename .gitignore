@@ -5,3 +5,4 @@ models/
 voices/
 tests/status.json
 *.log
+secrets/

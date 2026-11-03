@@ -61,7 +61,7 @@ export function buildSwarmEvidence({ jobId, role, executor, runId, answer, event
   else if (role === "governance") reportSucceeded = report?.decision === "approve" && Array.isArray(report?.checks) && report.checks.length > 0 && report.checks.every((item) => item.passed === true);
   const roleToolSucceeded = ["coder", "tester"].includes(role)
     ? terminalSucceeded
-    : toolResults.some((result) => result.ok && ["terminal", "web.fetch", "browser"].includes(result.tool));
+    : toolResults.some((result) => result.ok && ["terminal", "web.fetch"].includes(result.tool));
   const status = allToolsSucceeded && roleToolSucceeded && reportSucceeded && typeof answer === "string" && answer.trim()
     ? "succeeded" : "failed";
   if (!validIso(startedAt) || !validIso(completedAt) || Date.parse(completedAt) < Date.parse(startedAt)) throw new Error("invalid evidence timestamps");

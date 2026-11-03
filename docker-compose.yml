@@ -61,6 +61,7 @@ services:
       - ./data:/app/data
       - ./data/images:/output                 # generated images (served by /api/images)
       - ./skills:/app/skills:ro               # SKILL.md playbooks
+      - ${SWARM_EXECUTOR_SIGNING_KEY_HOST_FILE:-./secrets/grok-swarm-executor-ed25519.pem}:/run/secrets/grok-swarm-executor-ed25519.pem:ro
     depends_on: [ollama, browser, socket-proxy]
     networks: [default, swarm-integration]
 

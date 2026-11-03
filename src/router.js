@@ -126,7 +126,9 @@ export function makeRouter({ tools, docker }) {
       cached: false,
     };
     emit(runId, "swarm.result", { result });
-    return res.status(result.status === "succeeded" ? 200 : 422).json(result);
+    const persisted = replay(runId)?.events?.findLast((event) => event.kind === "swarm.result")?.result;
+    if (!persisted) return res.status(503).json({ error: "signed execution result could not be persisted to CodeX" });
+    return res.status(persisted.status === "succeeded" ? 200 : 422).json(persisted);
   });
 
   r.get("/health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));

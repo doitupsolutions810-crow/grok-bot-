@@ -9,6 +9,14 @@ import { needsReview, createApproval, saveHeld } from "../middleware/approvals.j
 import { emit } from "./codex.js";
 import { createHash } from "node:crypto";
 
+export function toolSucceeded(name, result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+  if (name === "terminal") return result.ok === true && result.exitCode === 0;
+  if (name === "web.fetch") return Number.isInteger(result.status) && result.status >= 200 && result.status < 300 && typeof result.content === "string";
+  if (name === "browser") return typeof result.url === "string" && typeof result.content === "string" && !result.error;
+  return result.isError !== true && result.ok !== false && !result.error;
+}
+
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;
   const ctx = {
@@ -56,14 +64,7 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
       }
       const stdout = typeof result?.stdout === "string" ? result.stdout : "";
       const stderr = typeof result?.stderr === "string" ? result.stderr : "";
-      // Tool success is adapter-specific. Unknown shapes and missing status are failures.
-      const toolOk = name === "terminal"
-        ? result?.ok === true && result?.exitCode === 0
-        : name === "web.fetch"
-          ? Number.isInteger(result?.status) && result.status >= 200 && result.status < 300 && typeof result.content === "string"
-          : name === "browser"
-            ? typeof result?.url === "string" && typeof result?.content === "string"
-            : Boolean(result && typeof result === "object" && result.isError !== true && result.ok !== false && !result.error);
+      const toolOk = toolSucceeded(name, result);
       emit(opts.runId, "tool.result", {
         agent: ctx.agent,
         tool: name,

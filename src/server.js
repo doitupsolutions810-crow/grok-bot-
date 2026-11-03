@@ -103,8 +103,14 @@ async function main() {
     if (!tokenMatches(expected, match?.[1])) return res.status(401).json({ error: "unauthorized specialist worker" });
     if (!swarmExecutor) return res.status(503).json({ error: "signed specialist executor is not configured" });
     try {
-      const result = await swarmExecutor({ jobId, role, objective });
-      return res.status(result.status).json(result.body);
+      const controller = new AbortController();
+      const abortOnDisconnect = () => {
+        if (!res.writableEnded && !controller.signal.aborted) controller.abort(new Error("worker disconnected"));
+      };
+      req.on("aborted", abortOnDisconnect);
+      res.on("close", abortOnDisconnect);
+      const result = await swarmExecutor({ jobId, role, objective, signal: controller.signal });
+      if (!res.writableEnded) return res.status(result.status).json(result.body);
     } catch (error) {
       return res.status(400).json({ error: error.message || "invalid execution request" });
     }

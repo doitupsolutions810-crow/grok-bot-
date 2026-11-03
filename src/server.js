@@ -93,7 +93,7 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
   app.post("/api/swarm/execute", async (req, res) => {
-    const { jobId, role, objective } = req.body || {};
+    const { jobId, role, objective, workerId, claimToken } = req.body || {};
     if (!["debugger", "coder", "tester", "governance"].includes(role)) {
       return res.status(400).json({ error: "unknown specialist role" });
     }
@@ -101,18 +101,39 @@ async function main() {
     const authorization = String(req.headers.authorization || "");
     const match = /^Bearer ([A-Za-z0-9._~+\\/-]{32,512})$/.exec(authorization);
     if (!tokenMatches(expected, match?.[1])) return res.status(401).json({ error: "unauthorized specialist worker" });
+    if (typeof jobId !== "string" || typeof workerId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId)
+        || typeof claimToken !== "string" || claimToken.length < 32) {
+      return res.status(400).json({ error: "jobId, workerId, and claimToken are required" });
+    }
     if (!swarmExecutor) return res.status(503).json({ error: "signed specialist executor is not configured" });
+    const coordinatorUrl = (process.env.SWARM_COORDINATOR_URL || "").replace(/\\/+$/, "");
+    const coordinatorToken = String(req.headers["x-swarm-coordinator-token"] || "");
+    if (!coordinatorUrl || coordinatorToken.length < 32 || coordinatorToken.length > 512) {
+      return res.status(503).json({ error: "coordinator claim-validation bridge is not configured" });
+    }
+    const controller = new AbortController();
+    const abortOnDisconnect = () => {
+      if (!res.writableEnded && !controller.signal.aborted) controller.abort(new Error("worker disconnected"));
+    };
+    req.on("aborted", abortOnDisconnect);
+    res.on("close", abortOnDisconnect);
     try {
-      const controller = new AbortController();
-      const abortOnDisconnect = () => {
-        if (!res.writableEnded && !controller.signal.aborted) controller.abort(new Error("worker disconnected"));
-      };
-      req.on("aborted", abortOnDisconnect);
-      res.on("close", abortOnDisconnect);
+      const validation = await fetch(coordinatorUrl + "/api/worker/" + role + "/validate", {
+        method: "POST",
+        headers: { authorization: "Bearer " + coordinatorToken, "content-type": "application/json" },
+        body: JSON.stringify({ jobId, workerId, claimToken }),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+      });
+      if (!validation.ok) {
+        const status = validation.status === 401 ? 401 : validation.status === 404 ? 404 : 409;
+        return res.status(status).json({ error: "coordinator rejected specialist claim (" + validation.status + ")" });
+      }
+      const validationBody = await validation.json();
+      if (validationBody.valid !== true) return res.status(409).json({ error: "coordinator did not validate specialist claim" });
       const result = await swarmExecutor({ jobId, role, objective, signal: controller.signal });
       if (!res.writableEnded) return res.status(result.status).json(result.body);
     } catch (error) {
-      return res.status(400).json({ error: error.message || "invalid execution request" });
+      if (!res.writableEnded) return res.status(controller.signal.aborted ? 409 : 503).json({ error: error.message || "specialist execution bridge unavailable" });
     }
   });
   app.use("/api", makeRouter({ tools, docker }));

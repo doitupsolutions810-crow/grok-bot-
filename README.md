@@ -181,3 +181,32 @@ machine they fail at preflight with a diagnostic.
 The orchestration core is a port of [Avrone](https://github.com/doitupsolutions810-crow/Avrone)
 (Python) into this Node.js runtime — trinity.py → `src/agents/trinity.js`,
 governor.py → `src/agents/governor.js`, codex.py → `src/agents/codex.js`.
+
+
+## Signed Swarm specialist execution bridge
+
+Grok Bot exposes `POST /api/swarm/execute` for the Swarm VM Runner's four specialist workers. The route invokes the existing live agent runtime with the real terminal/browser/research tools, isolates each job in a stable per-job sandbox workspace, captures actual terminal outcomes, hashes changed Git artifacts, and signs role-bound evidence with Ed25519. Debugger, Coder, Tester, and Governance each have separate bearer credentials. The route remains disabled until the executor ID and Ed25519 private key are configured.
+
+### Provisioning
+
+1. Create the shared Docker network once on the host: `docker network create swarm-integration`.
+2. Create `./secrets` in this repository and generate an Ed25519 keypair there:
+   ```bash
+   mkdir -p secrets
+   openssl genpkey -algorithm ED25519 -out secrets/swarm-executor-ed25519.pem
+   openssl pkey -in secrets/swarm-executor-ed25519.pem -pubout -out secrets/swarm-executor-ed25519.pub
+   chmod 600 secrets/swarm-executor-ed25519.pem
+   ```
+3. Copy only the public key to the Swarm VM Runner repository as `secrets/grok-swarm-executor.pub`. Never copy the private key into that repository.
+4. Set the same `SWARM_EXECUTOR_ID` in both repositories. Configure the four `SWARM_EXECUTOR_*_TOKEN` values identically in the Grok Bot and Swarm VM Runner environment files, using four independent random 32-byte-or-longer values.
+5. In Swarm VM Runner, set `SWARM_EXECUTOR_PUBLIC_KEY_HOST_FILE=./secrets/grok-swarm-executor.pub` and use `docker-compose.swarm.yml` when starting the stack. Set `SWARM_EXECUTOR_PUBLIC_KEY_FILE=/run/secrets/grok-swarm-executor.pub`.
+6. Optionally set `SWARM_DEFAULT_REPOSITORY` and `SWARM_DEFAULT_BRANCH` so a job with an empty workspace knows which repository to clone. Do not set a repository containing secrets or code the worker is not authorized to modify.
+7. Start both compose projects on the shared network. The Swarm workers reach Grok Bot at `http://grok-bot:3000/api/swarm/execute`.
+
+Run the focused evidence tests with `npm run test:swarm`.
+
+### Evidence and safety boundary
+
+A role is marked successful only when the required terminal activity and role-specific evidence exist. Coder evidence contains SHA-256 hashes of changed or untracked Git files, excluding common secret paths. Tester evidence requires a successful test command. Governance requires an explicit `DECISION: APPROVE`, successful test evidence, artifact inventory, and passing checks. The coordinator independently verifies the signature and role-specific evidence schema.
+
+The terminal tool runs commands inside the existing hardened `grok-sandbox` container, not on the Grok Bot host. That container has resource and capability restrictions and does not receive the Docker socket. This is container isolation, not a disposable VM or a distributed sandbox. The current workspace is persistent per job; configure retention and cleanup before production. A successful signature proves what this executor reported, not that the underlying model's conclusions are correct. Keep the Swarm PR in draft until the full multi-repository live acceptance run passes.

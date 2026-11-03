@@ -79,12 +79,16 @@ test("coordinator claim validation rejects malformed identities before network a
 test("executor enforces its concurrency ceiling and releases slots after completion", async () => {
   let release;
   let started;
+  let runs = 0;
   const startedPromise = new Promise(resolve => { started = resolve; });
   const execute = createSwarmExecutor({
     tools: [], executorId: "spiffe://test/executor", privateKeyPem: privatePem, maxConcurrency: 1,
     runAgent: async () => {
-      started();
-      await new Promise(resolve => { release = resolve; });
+      runs += 1;
+      if (runs === 1) {
+        started();
+        await new Promise(resolve => { release = resolve; });
+      }
       return "diagnostic output from a constrained test executor";
     }
   });

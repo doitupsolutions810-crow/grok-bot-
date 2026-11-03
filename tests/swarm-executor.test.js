@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify, createHash } from "node:crypto";
-import { createSwarmExecutor, canonicalJson, tokenMatches } from "../src/swarm/executor.js";
+import { createSwarmExecutor, canonicalJson, tokenMatches, validateCoordinatorClaim } from "../src/swarm/executor.js";
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
@@ -31,6 +31,50 @@ function harness({ role, answer = "Root cause found and reproduced in the isolat
   });
   return { execute, calls };
 }
+
+test("coordinator claim validation forwards role identity and accepts an exact active claim", async () => {
+  let call;
+  const result = await validateCoordinatorClaim({
+    coordinatorUrl: "http://coordinator:4100/",
+    role: "coder", jobId: "job-42", workerId: "coder-2",
+    claimToken: "c".repeat(40), coordinatorToken: "r".repeat(40),
+    fetchImpl: async (url, options) => {
+      call = { url, options };
+      return { ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-42", role: "coder", workerId: "coder-2", leaseExpiresAt: 999999 }) };
+    }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(call.url, "http://coordinator:4100/api/worker/coder/validate");
+  assert.equal(call.options.headers.authorization, "Bearer " + "r".repeat(40));
+  assert.deepEqual(JSON.parse(call.options.body), { jobId: "job-42", workerId: "coder-2", claimToken: "c".repeat(40) });
+});
+
+test("coordinator claim validation rejects wrong response identity, expiry, and unavailable coordinator", async () => {
+  const base = {
+    coordinatorUrl: "http://coordinator:4100", role: "tester", jobId: "job-1",
+    workerId: "tester-1", claimToken: "c".repeat(40), coordinatorToken: "r".repeat(40)
+  };
+  const wrong = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-evil", role: "tester", workerId: "tester-1" }) }) });
+  assert.equal(wrong.ok, false);
+  assert.equal(wrong.status, 409);
+  const expired = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: false, status: 409 }) });
+  assert.equal(expired.status, 409);
+  const unavailable = await validateCoordinatorClaim({ ...base, fetchImpl: async () => { throw new Error("offline"); } });
+  assert.equal(unavailable.status, 503);
+});
+
+test("coordinator claim validation rejects malformed identities before network access", async () => {
+  let calls = 0;
+  const base = {
+    coordinatorUrl: "http://coordinator:4100", role: "tester", jobId: "job-1",
+    workerId: "tester-1", claimToken: "c".repeat(40), coordinatorToken: "r".repeat(40),
+    fetchImpl: async () => { calls++; throw new Error("must not call"); }
+  };
+  assert.equal((await validateCoordinatorClaim({ ...base, workerId: "../escape" })).status, 400);
+  assert.equal((await validateCoordinatorClaim({ ...base, claimToken: "short" })).status, 400);
+  assert.equal((await validateCoordinatorClaim({ ...base, coordinatorToken: "" })).status, 503);
+  assert.equal(calls, 0);
+});
 
 test("canonical JSON sorts object keys recursively and rejects unsafe values", () => {
   assert.equal(canonicalJson({ z: 1, a: { y: 2, b: 3 } }), '{"a":{"b":3,"y":2},"z":1}');

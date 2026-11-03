@@ -69,7 +69,7 @@ export function makeRouter({ tools, docker }) {
     }
     const executor = process.env.SWARM_EXECUTOR_ID || "";
     const keyFile = process.env.SWARM_EXECUTOR_SIGNING_KEY_FILE || "";
-    if (!executor || !keyFile) return res.status(503).json({ error: "executor identity and Ed25519 signing key file are required" });
+    if (!executor.startsWith("spiffe://") || !keyFile) return res.status(503).json({ error: "SPIFFE executor identity and Ed25519 signing key file are required" });
     const roleAgentIds = {
       debugger: process.env.SWARM_DEBUGGER_AGENT_ID || "swarm-debugger",
       coder: process.env.SWARM_CODER_AGENT_ID || "swarm-coder",
@@ -88,6 +88,8 @@ export function makeRouter({ tools, docker }) {
     swarmActiveRuns.add(runId);
     try {
     const startedAt = new Date().toISOString();
+    const configuredMaxSteps = Number(process.env.SWARM_AGENT_MAX_STEPS || 12);
+    const maxSteps = Number.isFinite(configuredMaxSteps) ? Math.max(1, Math.min(20, Math.trunc(configuredMaxSteps))) : 12;
     const prompt = [
       "You are executing one specialist stage of a real AVRONE/Swarm software job.",
       "Work only in your persistent per-job sandbox workspace. Do not claim actions you did not execute.",
@@ -106,7 +108,7 @@ export function makeRouter({ tools, docker }) {
       answer = await runAgent(agent, prompt, tools, {
         runId,
         agentName: slug,
-        maxSteps: Math.min(20, Math.max(1, Number(process.env.SWARM_AGENT_MAX_STEPS || 12))),
+        maxSteps,
       });
       if (answer && typeof answer === "object" && answer.pendingApproval) {
         answer = JSON.stringify({ blocked: "human approval required; no specialist success asserted" });

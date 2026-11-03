@@ -76,6 +76,20 @@ test("coordinator claim validation rejects malformed identities before network a
   assert.equal(calls, 0);
 });
 
+test("tenant-scoped workspaces do not collide for identical job IDs", async () => {
+  const workspaceNames = [];
+  const execute = createSwarmExecutor({
+    tools: [], executorId: "spiffe://test/executor", privateKeyPem: privatePem,
+    runAgent: async (_agent, _prompt, _tools, options) => {
+      workspaceNames.push(options.agentName);
+      return "diagnostic output from a workspace with no terminal tool";
+    }
+  });
+  await execute({ jobId: "same-job", tenant: "tenant-a", role: "debugger", objective: "Inspect the workspace." });
+  await execute({ jobId: "same-job", tenant: "tenant-b", role: "debugger", objective: "Inspect the workspace." });
+  assert.notEqual(workspaceNames[0], workspaceNames[1]);
+});
+
 test("canonical JSON sorts object keys recursively and rejects unsafe values", () => {
   assert.equal(canonicalJson({ z: 1, a: { y: 2, b: 3 } }), '{"a":{"b":3,"y":2},"z":1}');
   assert.throws(() => canonicalJson({ x: undefined }), /unsafe JSON/);

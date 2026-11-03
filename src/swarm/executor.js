@@ -207,7 +207,7 @@ export async function validateCoordinatorClaim({
   try {
     url = new URL(String(coordinatorUrl || ""));
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("unsupported coordinator URL");
-    url.pathname = url.pathname.replace(/\\/+$/, "") + "/api/worker/" + role + "/validate";
+    url.pathname = url.pathname.replace(/\/+$/, "") + "/api/worker/" + role + "/validate";
     url.search = "";
     url.hash = "";
   } catch {

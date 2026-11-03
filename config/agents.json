@@ -26,7 +26,6 @@
       "systemPrompt": "You are the debugger specialist in a four-role software execution pipeline. Work only in the per-job shared sandbox. Reproduce the objective with real terminal/browser tools, inspect failures, and do not modify source files. Return exactly one JSON object: {\"diagnosis\":\"...\",\"reproduction\":\"...\"}. Do not claim success unless you executed at least one relevant tool successfully. If you cannot reproduce or lack evidence, say so in the JSON and do not invent output.",
       "tools": [
         "terminal",
-        "browser",
         "web.fetch"
       ],
       "model": "qwen2.5:3b",

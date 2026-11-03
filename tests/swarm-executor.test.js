@@ -36,25 +36,25 @@ test("coordinator claim validation forwards role identity and accepts an exact a
   let call;
   const result = await validateCoordinatorClaim({
     coordinatorUrl: "http://coordinator:4100/",
-    role: "coder", jobId: "job-42", workerId: "coder-2",
+    role: "coder", jobId: "job-42", tenant: "tenant-42", workerId: "coder-2",
     claimToken: "c".repeat(40), coordinatorToken: "r".repeat(40),
     fetchImpl: async (url, options) => {
       call = { url, options };
-      return { ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-42", role: "coder", workerId: "coder-2", leaseExpiresAt: 999999 }) };
+      return { ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-42", tenant: "tenant-42", role: "coder", workerId: "coder-2", leaseExpiresAt: 999999 }) };
     }
   });
   assert.equal(result.ok, true);
   assert.equal(call.url, "http://coordinator:4100/api/worker/coder/validate");
   assert.equal(call.options.headers.authorization, "Bearer " + "r".repeat(40));
-  assert.deepEqual(JSON.parse(call.options.body), { jobId: "job-42", workerId: "coder-2", claimToken: "c".repeat(40) });
+  assert.deepEqual(JSON.parse(call.options.body), { jobId: "job-42", tenant: "tenant-42", workerId: "coder-2", claimToken: "c".repeat(40) });
 });
 
 test("coordinator claim validation rejects wrong response identity, expiry, and unavailable coordinator", async () => {
   const base = {
-    coordinatorUrl: "http://coordinator:4100", role: "tester", jobId: "job-1",
+    coordinatorUrl: "http://coordinator:4100", role: "tester", jobId: "job-1", tenant: "test-tenant",
     workerId: "tester-1", claimToken: "c".repeat(40), coordinatorToken: "r".repeat(40)
   };
-  const wrong = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-evil", role: "tester", workerId: "tester-1" }) }) });
+  const wrong = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-evil", tenant: "test-tenant", role: "tester", workerId: "tester-1" }) }) });
   assert.equal(wrong.ok, false);
   assert.equal(wrong.status, 409);
   const expired = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: false, status: 409 }) });
@@ -92,7 +92,7 @@ test("token comparison rejects short, wrong, and different-length values", () =>
 
 test("signs evidence with Ed25519 and includes an actual terminal tool result", async () => {
   const { execute } = harness({ role: "debugger" });
-  const out = await execute({ jobId: "job-1", role: "debugger", objective: "Diagnose the failing service." });
+  const out = await execute({ jobId: "job-1", tenant: "test-tenant", role: "debugger", objective: "Diagnose the failing service." });
   assert.equal(out.status, 200);
   assert.equal(out.body.evidence.status, "succeeded");
   assert.equal(out.body.evidence.tool_results[0].tool, "terminal");
@@ -101,7 +101,7 @@ test("signs evidence with Ed25519 and includes an actual terminal tool result", 
 
 test("coder evidence fails when no changed artifact is present", async () => {
   const { execute } = harness({ role: "coder", inventory: "" });
-  const out = await execute({ jobId: "job-2", role: "coder", objective: "Implement the requested patch." });
+  const out = await execute({ jobId: "job-2", tenant: "test-tenant", role: "coder", objective: "Implement the requested patch." });
   assert.equal(out.status, 422);
   assert.equal(out.body.evidence.status, "failed");
   assert.equal(out.body.evidence.report.artifacts.length, 0);
@@ -111,34 +111,34 @@ test("coder evidence fails when no changed artifact is present", async () => {
 test("coder evidence lists only safe changed paths and SHA-256 digests", async () => {
   const inventory = `${"b".repeat(64)}  ./src/fix.js\n${"c".repeat(64)}  ./../escape.js\n${"d".repeat(64)}  ./node_modules/pkg/index.js\n${"e".repeat(64)}  ./secrets/private.pem\n${"f".repeat(64)}  ./.env\n`;
   const { execute } = harness({ role: "coder", inventory });
-  const out = await execute({ jobId: "job-3", role: "coder", objective: "Implement the requested patch." });
+  const out = await execute({ jobId: "job-3", tenant: "test-tenant", role: "coder", objective: "Implement the requested patch." });
   assert.equal(out.status, 200);
   assert.deepEqual(out.body.evidence.report.artifacts, [{ path: "src/fix.js", sha256: "sha256:" + "b".repeat(64) }]);
 });
 
 test("tester evidence requires a successful test command", async () => {
   const { execute } = harness({ role: "tester" });
-  const out = await execute({ jobId: "job-4", role: "tester", objective: "Run the tests." });
+  const out = await execute({ jobId: "job-4", tenant: "test-tenant", role: "tester", objective: "Run the tests." });
   assert.equal(out.status, 200);
   assert.deepEqual(out.body.evidence.report.tests, [{ command: "npm test", exit_code: 0 }]);
 });
 
 test("tester evidence fails when the test command fails", async () => {
   const { execute } = harness({ role: "tester", terminalResults: [{ ok: false, stdout: "", stderr: "failed" }] });
-  const out = await execute({ jobId: "job-5", role: "tester", objective: "Run the tests." });
+  const out = await execute({ jobId: "job-5", tenant: "test-tenant", role: "tester", objective: "Run the tests." });
   assert.equal(out.status, 422);
 });
 
 test("governance rejects without explicit approval and successful checks", async () => {
   const { execute } = harness({ role: "governance", answer: "The code appears fine." });
-  const out = await execute({ jobId: "job-6", role: "governance", objective: "Review the changes." });
+  const out = await execute({ jobId: "job-6", tenant: "test-tenant", role: "governance", objective: "Review the changes." });
   assert.equal(out.status, 422);
   assert.equal(out.body.evidence.report.decision, "reject");
 });
 
 test("governance approves only with explicit decision, tests and artifacts", async () => {
   const { execute } = harness({ role: "governance", answer: "Independent review complete.\nDECISION: APPROVE" });
-  const out = await execute({ jobId: "job-7", role: "governance", objective: "Review the changes." });
+  const out = await execute({ jobId: "job-7", tenant: "test-tenant", role: "governance", objective: "Review the changes." });
   assert.equal(out.status, 200);
   assert.equal(out.body.evidence.report.decision, "approve");
   assert.ok(out.body.evidence.report.checks.every(check => check.passed));
@@ -155,7 +155,7 @@ test("propagates cancellation into the live agent runtime and fails closed", asy
     }
   });
   controller.abort();
-  await assert.rejects(() => execute({ jobId: "job-cancel", role: "debugger", objective: "Inspect the task.", signal: controller.signal }), /execution aborted before start/);
+  await assert.rejects(() => execute({ jobId: "job-cancel", tenant: "test-tenant", role: "debugger", objective: "Inspect the task.", signal: controller.signal }), /execution aborted before start/);
   assert.equal(receivedSignal, undefined);
   const active = new AbortController();
   const executeActive = createSwarmExecutor({
@@ -165,7 +165,7 @@ test("propagates cancellation into the live agent runtime and fails closed", asy
       throw new Error("agent execution aborted");
     }
   });
-  const out = await executeActive({ jobId: "job-cancel-2", role: "debugger", objective: "Inspect the task.", signal: active.signal });
+  const out = await executeActive({ jobId: "job-cancel-2", tenant: "test-tenant", role: "debugger", objective: "Inspect the task.", signal: active.signal });
   assert.equal(receivedSignal, active.signal);
   assert.equal(out.status, 422);
   assert.equal(out.body.evidence.status, "failed");
@@ -174,7 +174,7 @@ test("propagates cancellation into the live agent runtime and fails closed", asy
 test("rejects malformed job IDs, roles, objectives and non-Ed25519 keys", async () => {
   const { execute } = harness({ role: "debugger" });
   await assert.rejects(() => execute({ jobId: "../escape", role: "debugger", objective: "ok" }), /invalid jobId/);
-  await assert.rejects(() => execute({ jobId: "job", role: "admin", objective: "ok" }), /invalid specialist role/);
-  await assert.rejects(() => execute({ jobId: "job", role: "debugger", objective: "" }), /objective/);
+  await assert.rejects(() => execute({ jobId: "job", tenant: "test-tenant", role: "admin", objective: "ok" }), /invalid specialist role/);
+  await assert.rejects(() => execute({ jobId: "job", tenant: "test-tenant", role: "debugger", objective: "" }), /objective/);
   assert.throws(() => createSwarmExecutor({ tools: [], runAgent: async () => "", executorId: "x", privateKeyPem: publicPem }), /private key/);
 });

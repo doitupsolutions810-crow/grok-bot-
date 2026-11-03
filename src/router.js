@@ -19,6 +19,7 @@ import {
 import { transcribe, speak } from "./voice/voice.js";
 import { visionTool } from "./tools/vision.js";
 import { buildSwarmEvidence } from "./agents/swarm-evidence.js";
+import { emit } from "./agents/codex.js";
 
 export function makeRouter({ tools, docker }) {
   const r = Router();

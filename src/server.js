@@ -21,7 +21,7 @@ import { avroneTool } from "./tools/avrone.js";
 import { skillTools, playbookTools } from "./tools/skills.js";
 import { startXTrigger } from "./tools/xtrigger.js";
 import { traceTools } from "./observability/traces.js";
-import { createSwarmExecutor, readPrivateKey, tokenMatches } from "./swarm/executor.js";
+import { createSwarmExecutor, readPrivateKey, tokenMatches, validateCoordinatorClaim } from "./swarm/executor.js";
 
 const PORT = process.env.PORT || 3000;
 
@@ -118,18 +118,11 @@ async function main() {
     req.on("aborted", abortOnDisconnect);
     res.on("close", abortOnDisconnect);
     try {
-      const validation = await fetch(coordinatorUrl + "/api/worker/" + role + "/validate", {
-        method: "POST",
-        headers: { authorization: "Bearer " + coordinatorToken, "content-type": "application/json" },
-        body: JSON.stringify({ jobId, workerId, claimToken }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+      const validation = await validateCoordinatorClaim({
+        coordinatorUrl, role, jobId, workerId, claimToken, coordinatorToken,
+        signal: controller.signal
       });
-      if (!validation.ok) {
-        const status = validation.status === 401 ? 401 : validation.status === 404 ? 404 : 409;
-        return res.status(status).json({ error: "coordinator rejected specialist claim (" + validation.status + ")" });
-      }
-      const validationBody = await validation.json();
-      if (validationBody.valid !== true) return res.status(409).json({ error: "coordinator did not validate specialist claim" });
+      if (!validation.ok) return res.status(validation.status).json({ error: validation.error });
       const result = await swarmExecutor({ jobId, role, objective, signal: controller.signal });
       if (!res.writableEnded) return res.status(result.status).json(result.body);
     } catch (error) {

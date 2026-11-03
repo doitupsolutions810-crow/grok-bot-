@@ -15,6 +15,6 @@ export const webFetchTool = {
       signal: AbortSignal.timeout(15_000)
     });
     const text = await res.text();
-    return { status: res.status, contentType: res.headers.get("content-type"), content: text.slice(0, 12_000) };
+    return { ok: res.ok, exitCode: res.ok ? 0 : res.status, status: res.status, contentType: res.headers.get("content-type"), content: text.slice(0, 12_000) };
   }
 };

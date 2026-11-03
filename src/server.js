@@ -62,7 +62,8 @@ async function main() {
         executorId: process.env.SWARM_EXECUTOR_ID,
         privateKeyPem,
         defaultRepository: process.env.SWARM_DEFAULT_REPOSITORY || "",
-        defaultBranch: process.env.SWARM_DEFAULT_BRANCH || ""
+        defaultBranch: process.env.SWARM_DEFAULT_BRANCH || "",
+        maxConcurrency: Number(process.env.SWARM_EXECUTOR_MAX_CONCURRENCY || 4)
       });
       console.log("[swarm] signed specialist execution bridge configured");
     } else {
@@ -124,6 +125,7 @@ async function main() {
       });
       if (!validation.ok) return res.status(validation.status).json({ error: validation.error });
       const result = await swarmExecutor({ jobId, tenant, role, objective, signal: controller.signal });
+      if (result.status === 429) res.setHeader("Retry-After", "10");
       if (!res.writableEnded) return res.status(result.status).json(result.body);
     } catch (error) {
       if (!res.writableEnded) return res.status(controller.signal.aborted ? 409 : 503).json({ error: error.message || "specialist execution bridge unavailable" });

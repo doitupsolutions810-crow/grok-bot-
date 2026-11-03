@@ -96,10 +96,10 @@ export function makeRouter({ tools, docker }) {
       "Job ID: " + jobId,
       "Role: " + role,
       "Objective: " + objective,
-      role === "debugger" ? "Required JSON: {"diagnosis":"...","reproduction":"..."}. Reproduce with a real tool call." :
-      role === "coder" ? "Required JSON: {"artifacts":[{"path":"relative/path","sha256":"sha256:<64 lowercase hex>"}]}. Patch only scoped files and hash every changed artifact." :
-      role === "tester" ? "Required JSON: {"tests":[{"command":"exact command","exit_code":0}]}. Run actual tests and report actual exit codes." :
-      "Required JSON: {"decision":"approve|reject","checks":[{"name":"...","passed":true}]}. Independently inspect the work and verify artifact hashes and tests."
+      role === "debugger" ? 'Required JSON: {"diagnosis":"...","reproduction":"..."}. Reproduce with a real tool call.' :
+      role === "coder" ? 'Required JSON: {"artifacts":[{"path":"relative/path","sha256":"sha256:<64 lowercase hex>"}]}. Patch only scoped files and hash every changed artifact.' :
+      role === "tester" ? 'Required JSON: {"tests":[{"command":"exact command","exit_code":0}]}. Run actual tests and report actual exit codes.' :
+      'Required JSON: {"decision":"approve|reject","checks":[{"name":"...","passed":true}]}. Independently inspect the work and verify artifact hashes and tests.'
     ].join("\n\n");
     let answer;
     try {

@@ -9,11 +9,12 @@ import { needsReview, createApproval, saveHeld } from "../middleware/approvals.j
 import { emit } from "./codex.js";
 
 export async function runAgent(agent, userMessage, tools, opts = {}) {
-  const { maxSteps = 8, resume = null } = opts;
+  const { maxSteps = 8, resume = null, signal = null } = opts;
   const ctx = {
     agent: opts.agentName || agent.id,
     run: { runId: opts.runId },
-    spawnDepth: opts.spawnDepth ?? 0
+    spawnDepth: opts.spawnDepth ?? 0,
+    signal
   };
   const messages = resume || [
     { role: "system", content: agent.systemPrompt },
@@ -25,7 +26,8 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     : tools.filter(t => agent.tools?.includes(t.name) || agent.tools?.includes(t.name.split(".")[0]));
 
   for (let step = 0; step < maxSteps; step++) {
-    const reply = await chatRoute(messages, available, { mode: agent.mode || "chat" });
+    if (signal?.aborted) throw new Error("agent execution aborted");
+    const reply = await chatRoute(messages, available, { mode: agent.mode || "chat", signal });
 
     if (!reply.tool_calls?.length) return reply.content;   // final answer
 
@@ -33,6 +35,7 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     emit(opts.runId, "agent.message", { agent: ctx.agent, calls: reply.tool_calls.length });
 
     for (const call of reply.tool_calls) {
+      if (signal?.aborted) throw new Error("agent execution aborted");
       const name = call.function.name;
       let parsedArgs = {};
       try { parsedArgs = JSON.parse(call.function.arguments || "{}"); } catch { parsedArgs = { raw: call.function.arguments }; }

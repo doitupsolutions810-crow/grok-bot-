@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import {
   loadAgents, listBots, findAgent, runAgent, runOrchestrated,
   thinkAnswer, deepSearch, runSquad, runDeep,
@@ -70,6 +70,13 @@ export function makeRouter({ tools, docker }) {
     const executor = process.env.SWARM_EXECUTOR_ID || "";
     const keyFile = process.env.SWARM_EXECUTOR_SIGNING_KEY_FILE || "";
     if (!executor.startsWith("spiffe://") || !keyFile) return res.status(503).json({ error: "SPIFFE executor identity and Ed25519 signing key file are required" });
+    let signingKeyPem;
+    try {
+      if ((statSync(keyFile).mode & 0o077) !== 0) return res.status(503).json({ error: "executor private key permissions must be owner-only" });
+      signingKeyPem = readFileSync(keyFile);
+    } catch (error) {
+      return res.status(503).json({ error: "executor private key file is unavailable" });
+    }
     const roleAgentIds = {
       debugger: process.env.SWARM_DEBUGGER_AGENT_ID || "swarm-debugger",
       coder: process.env.SWARM_CODER_AGENT_ID || "swarm-coder",
@@ -123,7 +130,7 @@ export function makeRouter({ tools, docker }) {
       signed = buildSwarmEvidence({
         jobId, role, executor, runId, answer,
         events: trace?.events || [], startedAt, completedAt,
-        privateKeyPem: readFileSync(keyFile),
+        privateKeyPem: signingKeyPem,
       });
     } catch (error) {
       return res.status(503).json({ error: "could not create signed execution evidence: " + String(error?.message || error) });

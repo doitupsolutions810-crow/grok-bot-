@@ -32,8 +32,9 @@ export function tokenMatches(expected, supplied) {
   return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
 
-function safeWorkspaceId(jobId) {
-  return "swarm-" + String(jobId).toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 40);
+function safeWorkspaceId(tenant, jobId) {
+  const identity = String(tenant) + "\\0" + String(jobId);
+  return "swarm-" + createHash("sha256").update(identity, "utf8").digest("hex").slice(0, 32);
 }
 
 function rolePrompt(role, objective, defaultRepository, defaultBranch) {
@@ -72,15 +73,16 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
   const privateKey = createPrivateKey(privateKeyPem);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new TypeError("executor signing key must be Ed25519");
 
-  return async function execute({ jobId, role, objective, signal }) {
+  return async function execute({ jobId, tenant, role, objective, signal }) {
     if (typeof jobId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(jobId)) throw new TypeError("invalid jobId");
+    if (typeof tenant !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(tenant)) throw new TypeError("invalid tenant");
     if (!ROLES.has(role)) throw new TypeError("invalid specialist role");
     if (typeof objective !== "string" || !objective.trim() || objective.length > MAX_OBJECTIVE) throw new TypeError("objective must contain 1..2000 characters");
 
     if (signal?.aborted) throw new Error("execution aborted before start");
     const startedAt = new Date(now()).toISOString();
     const runId = randomUUID();
-    const workspaceAgent = safeWorkspaceId(jobId);
+    const workspaceAgent = safeWorkspaceId(tenant, jobId);
     const captured = [];
     const allowed = tools.filter(tool => ALLOWED_TOOLS.has(tool.name));
     const wrappedTools = allowed.map(tool => ({
@@ -182,11 +184,12 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
 }
 
 export async function validateCoordinatorClaim({
-  coordinatorUrl, role, jobId, workerId, claimToken, coordinatorToken,
+  coordinatorUrl, role, jobId, tenant, workerId, claimToken, coordinatorToken,
   fetchImpl = fetch, signal, timeoutMs = 10000
 }) {
   if (!ROLES.has(role)) return { ok: false, status: 400, error: "invalid specialist role" };
   if (typeof jobId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(jobId)) return { ok: false, status: 400, error: "invalid jobId" };
+  if (typeof tenant !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(tenant)) return { ok: false, status: 400, error: "invalid tenant" };
   if (typeof workerId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId)) return { ok: false, status: 400, error: "invalid workerId" };
   if (typeof claimToken !== "string" || claimToken.length < 32 || claimToken.length > 512) return { ok: false, status: 400, error: "invalid claimToken" };
   if (typeof coordinatorToken !== "string" || coordinatorToken.length < 32 || coordinatorToken.length > 512) return { ok: false, status: 503, error: "coordinator credential is not configured" };
@@ -205,7 +208,7 @@ export async function validateCoordinatorClaim({
     const response = await fetchImpl(url.toString(), {
       method: "POST",
       headers: { authorization: "Bearer " + coordinatorToken, "content-type": "application/json" },
-      body: JSON.stringify({ jobId, workerId, claimToken }),
+      body: JSON.stringify({ jobId, tenant, workerId, claimToken }),
       signal: requestSignal
     });
     if (!response.ok) {
@@ -213,7 +216,7 @@ export async function validateCoordinatorClaim({
       return { ok: false, status, error: "coordinator rejected specialist claim (" + response.status + ")" };
     }
     const body = await response.json();
-    if (body?.valid !== true || body.jobId !== jobId || body.role !== role || body.workerId !== workerId) {
+    if (body?.valid !== true || body.jobId !== jobId || body.tenant !== tenant || body.role !== role || body.workerId !== workerId) {
       return { ok: false, status: 409, error: "coordinator claim validation response did not match request" };
     }
     return { ok: true, status: 200, leaseExpiresAt: body.leaseExpiresAt };

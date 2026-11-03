@@ -20,7 +20,7 @@ function client(model) {
 // Non-stream calls return the MESSAGE (choices[0].message) directly — that's
 // what the agent loop reads (.content, .tool_calls). Streaming returns the raw
 // stream for piping.
-export async function chatRoute(messages, tools = [], { mode = "chat", stream = false } = {}) {
+export async function chatRoute(messages, tools = [], { mode = "chat", stream = false, signal } = {}) {
   const order = mode === "chat" ? CHAIN.slice().reverse().concat(CHAIN[0]) : CHAIN; // chat = fast-first; heavy = big-first
   let lastErr;
   for (const model of order) {
@@ -29,7 +29,7 @@ export async function chatRoute(messages, tools = [], { mode = "chat", stream = 
       if (tools.length) params.tools = tools.map(t => ({
         type: "function", function: { name: t.name, description: t.description, parameters: t.parameters }
       }));
-      const res = await client(model).chat.completions.create(params);
+      const res = await client(model).chat.completions.create(params, signal ? { signal } : undefined);
       return stream ? res : res.choices[0].message;
     } catch (e) { lastErr = e; console.warn(`[llm-router] ${model} failed (${e.message}), falling back`); }
   }

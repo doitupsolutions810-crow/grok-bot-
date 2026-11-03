@@ -49,12 +49,25 @@ services:
       WHISPER_URL: ${WHISPER_URL:-}             # full profile: http://whisper:9000 (HTTP STT sidecar)
       PIPER_CMD: ${PIPER_CMD:-}                 # TTS binary override (default: piper)
       AVRONE_URL: ${AVRONE_URL:-}               # the concluding system bridge -> AVRONE
+      # Signed Swarm worker bridge. Keep the Ed25519 private key out of the repo.
+      SWARM_EXECUTOR_ID: ${SWARM_EXECUTOR_ID:-}
+      SWARM_EXECUTOR_MAX_CONCURRENCY: ${SWARM_EXECUTOR_MAX_CONCURRENCY:-4}
+      SWARM_COORDINATOR_URL: ${SWARM_COORDINATOR_URL:-http://coordinator:4100}
+      SWARM_EXECUTOR_PRIVATE_KEY_FILE: /run/secrets/swarm-executor-ed25519.pem
+      SWARM_EXECUTOR_DEBUGGER_TOKEN: ${SWARM_EXECUTOR_DEBUGGER_TOKEN:-}
+      SWARM_EXECUTOR_CODER_TOKEN: ${SWARM_EXECUTOR_CODER_TOKEN:-}
+      SWARM_EXECUTOR_TESTER_TOKEN: ${SWARM_EXECUTOR_TESTER_TOKEN:-}
+      SWARM_EXECUTOR_GOVERNANCE_TOKEN: ${SWARM_EXECUTOR_GOVERNANCE_TOKEN:-}
+      SWARM_DEFAULT_REPOSITORY: ${SWARM_DEFAULT_REPOSITORY:-}
+      SWARM_DEFAULT_BRANCH: ${SWARM_DEFAULT_BRANCH:-}
     volumes:
       - ./config:/app/config
       - ./data:/app/data
       - ./data/images:/output                 # generated images (served by /api/images)
       - ./skills:/app/skills:ro               # SKILL.md playbooks
+      - ./secrets:/run/secrets:ro
     depends_on: [ollama, browser, socket-proxy]
+    networks: [default, swarm-integration]
 
   ollama:
     image: ollama/ollama:latest
@@ -98,3 +111,8 @@ volumes:
   comfyui_models:
   browser_profile:                  # shared persistent browser computer
   grok_workspace:                   # shared sandbox filesystem for all agents
+
+networks:
+  swarm-integration:
+    external: true
+    name: ${SWARM_INTEGRATION_NETWORK:-swarm-integration}

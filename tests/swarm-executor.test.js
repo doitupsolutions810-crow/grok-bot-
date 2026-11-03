@@ -204,6 +204,39 @@ test("governance approves only with explicit decision, tests and artifacts", asy
   assert.equal(out.status, 200);
   assert.equal(out.body.evidence.report.decision, "approve");
   assert.ok(out.body.evidence.report.checks.every(check => check.passed));
+  assert.deepEqual(out.body.evidence.report.artifact_inventory, [
+    { path: "src/fix.js", sha256: "sha256:" + "a".repeat(64) },
+  ]);
+  assert.deepEqual(out.body.evidence.report.test_commands, [
+    { command: "npm test", exit_code: 0 },
+  ]);
+});
+
+test("governance rejects when its independent inventory or test evidence is missing", async () => {
+  const noArtifacts = harness({ role: "governance", answer: "DECISION: APPROVE", inventory: "" });
+  const noArtifactsResult = await noArtifacts.execute({
+    jobId: "job-governance-no-artifacts", tenant: "test-tenant", role: "governance", objective: "Review the changes.",
+  });
+  assert.equal(noArtifactsResult.status, 422);
+  assert.equal(noArtifactsResult.body.evidence.report.decision, "reject");
+  assert.deepEqual(noArtifactsResult.body.evidence.report.artifact_inventory, []);
+
+  const failedTest = harness({
+    role: "governance",
+    answer: "DECISION: APPROVE",
+    terminalResults: [
+      { ok: false, stdout: "", stderr: "test failed" },
+      { ok: true, stdout: "a".repeat(64) + "  ./src/fix.js\\n", stderr: "" },
+    ],
+  });
+  const failedTestResult = await failedTest.execute({
+    jobId: "job-governance-failed-test", tenant: "test-tenant", role: "governance", objective: "Review the changes.",
+  });
+  assert.equal(failedTestResult.status, 422);
+  assert.equal(failedTestResult.body.evidence.report.decision, "reject");
+  assert.deepEqual(failedTestResult.body.evidence.report.test_commands, [
+    { command: "npm test", exit_code: 1 },
+  ]);
 });
 
 test("propagates cancellation into the live agent runtime and fails closed", async () => {

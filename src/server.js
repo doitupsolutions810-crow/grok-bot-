@@ -93,7 +93,7 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
   app.post("/api/swarm/execute", async (req, res) => {
-    const { jobId, role, objective, workerId, claimToken } = req.body || {};
+    const { jobId, tenant, role, objective, workerId, claimToken } = req.body || {};
     if (!["debugger", "coder", "tester", "governance"].includes(role)) {
       return res.status(400).json({ error: "unknown specialist role" });
     }
@@ -101,7 +101,7 @@ async function main() {
     const authorization = String(req.headers.authorization || "");
     const match = /^Bearer ([A-Za-z0-9._~+\\/-]{32,512})$/.exec(authorization);
     if (!tokenMatches(expected, match?.[1])) return res.status(401).json({ error: "unauthorized specialist worker" });
-    if (typeof jobId !== "string" || typeof workerId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId)
+    if (typeof jobId !== "string" || typeof tenant !== "string" || typeof workerId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId)
         || typeof claimToken !== "string" || claimToken.length < 32) {
       return res.status(400).json({ error: "jobId, workerId, and claimToken are required" });
     }
@@ -119,11 +119,11 @@ async function main() {
     res.on("close", abortOnDisconnect);
     try {
       const validation = await validateCoordinatorClaim({
-        coordinatorUrl, role, jobId, workerId, claimToken, coordinatorToken,
+        coordinatorUrl, role, jobId, tenant, workerId, claimToken, coordinatorToken,
         signal: controller.signal
       });
       if (!validation.ok) return res.status(validation.status).json({ error: validation.error });
-      const result = await swarmExecutor({ jobId, role, objective, signal: controller.signal });
+      const result = await swarmExecutor({ jobId, tenant, role, objective, signal: controller.signal });
       if (!res.writableEnded) return res.status(result.status).json(result.body);
     } catch (error) {
       if (!res.writableEnded) return res.status(controller.signal.aborted ? 409 : 503).json({ error: error.message || "specialist execution bridge unavailable" });

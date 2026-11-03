@@ -203,6 +203,8 @@ Grok Bot exposes `POST /api/swarm/execute` for the Swarm VM Runner's four specia
 6. Optionally set `SWARM_DEFAULT_REPOSITORY` and `SWARM_DEFAULT_BRANCH` so a job with an empty workspace knows which repository to clone. Do not set a repository containing secrets or code the worker is not authorized to modify.
 7. Set `SWARM_COORDINATOR_URL=http://coordinator:4100` in Grok Bot. Before executing any agent task, Grok Bot forwards the worker's role-scoped coordinator credential and claim token to the coordinator's `/validate` endpoint. The coordinator must be attached to the same external network. Start both compose projects on the shared network. The Swarm workers reach Grok Bot at `http://grok-bot:3000/api/swarm/execute`.
 
+Specialist concurrency is bounded by `SWARM_EXECUTOR_MAX_CONCURRENCY` (default 4; allowed 1..32). The specialist runtime exposes only terminal, web-fetch, and RAG-search tools; interactive browser and task-board mutation tools are deliberately excluded from this unattended path. Each workspace name is a one-way hash of tenant plus job ID, preventing two tenants with the same job identifier from sharing a sandbox directory.
+
 Run the focused evidence tests with `npm run test:swarm`.
 
 ### Evidence and safety boundary

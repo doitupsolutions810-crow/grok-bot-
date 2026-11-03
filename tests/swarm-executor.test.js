@@ -35,7 +35,7 @@ function harness({ role, answer = "Root cause found and reproduced in the isolat
 test("coordinator claim validation forwards role identity and accepts an exact active claim", async () => {
   let call;
   const result = await validateCoordinatorClaim({
-    coordinatorUrl: "http://coordinator:4100/",
+    coordinatorUrl: "http://coordinator:4100///",
     role: "coder", jobId: "job-42", tenant: "tenant-42", workerId: "coder-2",
     claimToken: "c".repeat(40), coordinatorToken: "r".repeat(40),
     fetchImpl: async (url, options) => {

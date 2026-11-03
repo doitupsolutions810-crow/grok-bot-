@@ -51,6 +51,7 @@ services:
       AVRONE_URL: ${AVRONE_URL:-}               # the concluding system bridge -> AVRONE
       # Signed Swarm worker bridge. Keep the Ed25519 private key out of the repo.
       SWARM_EXECUTOR_ID: ${SWARM_EXECUTOR_ID:-}
+      SWARM_COORDINATOR_URL: ${SWARM_COORDINATOR_URL:-http://coordinator:4100}
       SWARM_EXECUTOR_PRIVATE_KEY_FILE: /run/secrets/swarm-executor-ed25519.pem
       SWARM_EXECUTOR_DEBUGGER_TOKEN: ${SWARM_EXECUTOR_DEBUGGER_TOKEN:-}
       SWARM_EXECUTOR_CODER_TOKEN: ${SWARM_EXECUTOR_CODER_TOKEN:-}

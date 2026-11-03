@@ -23,6 +23,7 @@ import { emit } from "./agents/codex.js";
 
 export function makeRouter({ tools, docker }) {
   const r = Router();
+  const swarmActiveRuns = new Set();
   const { agents } = loadAgents();
   const find = id => findAgent(id) || agents["grok-main"];
 
@@ -79,6 +80,9 @@ export function makeRouter({ tools, docker }) {
     const prior = replay(runId);
     const cached = prior?.events?.findLast((event) => event.kind === "swarm.result")?.result;
     if (cached) return res.status(cached.status === "succeeded" ? 200 : 422).json({ ...cached, cached: true });
+    if (swarmActiveRuns.has(runId)) return res.status(202).json({ status: "running", run_id: runId });
+    swarmActiveRuns.add(runId);
+    try {
     const startedAt = new Date().toISOString();
     const prompt = [
       "You are executing one specialist stage of a real AVRONE/Swarm software job.",
@@ -129,6 +133,9 @@ export function makeRouter({ tools, docker }) {
     const persisted = replay(runId)?.events?.findLast((event) => event.kind === "swarm.result")?.result;
     if (!persisted) return res.status(503).json({ error: "signed execution result could not be persisted to CodeX" });
     return res.status(persisted.status === "succeeded" ? 200 : 422).json(persisted);
+    } finally {
+      swarmActiveRuns.delete(runId);
+    }
   });
 
   r.get("/health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));

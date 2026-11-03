@@ -59,7 +59,7 @@ function parseArtifacts(stdout) {
     if (!rel || rel.startsWith("/") || rel.split("/").some(p => p === ".." || p === ".git" || p === "node_modules" || p === "secrets")
         || /(^|\/)\.env(?:\.|$)|\.(?:pem|key|p12|pfx)$/i.test(rel)
         || /(?:id_rsa|credentials)/i.test(rel) || /[\0\r\n\t]/.test(rel)) continue;
-    rows.push({ path: rel, sha256: match[1] });
+    rows.push({ path: rel, sha256: "sha256:" + match[1] });
     if (rows.length >= MAX_ARTIFACTS) break;
   }
   return rows;
@@ -124,7 +124,7 @@ export function createSwarmExecutor({ tools, runAgent, executorId, privateKeyPem
     if (terminal && role !== "debugger" && !signal?.aborted) {
       try {
         const inventory = await terminal.run({
-          command: "git rev-parse --is-inside-work-tree >/dev/null && { git diff --name-only -z HEAD; git ls-files --others --exclude-standard -z; } | xargs -0 -r sha256sum"
+          command: "git rev-parse --is-inside-work-tree >/dev/null && { git diff --name-only -z HEAD --diff-filter=ACMRTUXB; git ls-files --others --exclude-standard -z; } | xargs -0 -r -n1 sh -c 'test -f \"$1\" && test ! -L \"$1\" && sha256sum -- \"$1\"' sh"
         }, { agent: workspaceAgent, signal });
         const stdout = String(inventory?.stdout ?? "");
         const stderr = String(inventory?.stderr ?? inventory?.error ?? "");

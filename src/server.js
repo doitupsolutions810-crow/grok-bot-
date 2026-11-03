@@ -21,6 +21,7 @@ import { avroneTool } from "./tools/avrone.js";
 import { skillTools, playbookTools } from "./tools/skills.js";
 import { startXTrigger } from "./tools/xtrigger.js";
 import { traceTools } from "./observability/traces.js";
+import { createSwarmExecutor, readPrivateKey, tokenMatches } from "./swarm/executor.js";
 
 const PORT = process.env.PORT || 3000;
 
@@ -50,6 +51,27 @@ async function main() {
   // 5. Wrap everything with the hash-chained trace ledger (ctx passes through)
   const tools = traceTools([...baseTools, ...mcp]);
 
+  // 5a. Optional signed Swarm execution bridge. It stays disabled until an
+  // operator mounts the pinned Ed25519 private key and configures the executor ID.
+  let swarmExecutor = null;
+  try {
+    const privateKeyPem = readPrivateKey(process.env.SWARM_EXECUTOR_PRIVATE_KEY_FILE || "");
+    if (privateKeyPem && process.env.SWARM_EXECUTOR_ID) {
+      swarmExecutor = createSwarmExecutor({
+        tools, runAgent,
+        executorId: process.env.SWARM_EXECUTOR_ID,
+        privateKeyPem,
+        defaultRepository: process.env.SWARM_DEFAULT_REPOSITORY || "",
+        defaultBranch: process.env.SWARM_DEFAULT_BRANCH || ""
+      });
+      console.log("[swarm] signed specialist execution bridge configured");
+    } else {
+      console.log("[swarm] specialist execution bridge disabled: signing key or executor ID missing");
+    }
+  } catch (error) {
+    console.warn("[swarm] specialist execution bridge disabled:", error.message);
+  }
+
   // 6. Live self-test: prove every subsystem works before serving traffic
   const test = await selftest({ tools, docker });
   if (!test.ok) {
@@ -70,6 +92,23 @@ async function main() {
   // 8. Serve
   const app = express();
   app.use(express.json({ limit: "2mb" }));
+  app.post("/api/swarm/execute", async (req, res) => {
+    const { jobId, role, objective } = req.body || {};
+    if (!["debugger", "coder", "tester", "governance"].includes(role)) {
+      return res.status(400).json({ error: "unknown specialist role" });
+    }
+    const expected = process.env["SWARM_EXECUTOR_" + role.toUpperCase() + "_TOKEN"] || "";
+    const authorization = String(req.headers.authorization || "");
+    const match = /^Bearer ([A-Za-z0-9._~+\\/-]{32,512})$/.exec(authorization);
+    if (!tokenMatches(expected, match?.[1])) return res.status(401).json({ error: "unauthorized specialist worker" });
+    if (!swarmExecutor) return res.status(503).json({ error: "signed specialist executor is not configured" });
+    try {
+      const result = await swarmExecutor({ jobId, role, objective });
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || "invalid execution request" });
+    }
+  });
   app.use("/api", makeRouter({ tools, docker }));
   app.get("/api/status", (req, res) => res.json({
     ready: test.ok, degraded: !test.ok, tools: tools.map(t => t.name), selftest: test.results

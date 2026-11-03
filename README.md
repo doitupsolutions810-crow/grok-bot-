@@ -201,7 +201,7 @@ Grok Bot exposes `POST /api/swarm/execute` for the Swarm VM Runner's four specia
 4. Set the same `SWARM_EXECUTOR_ID` in both repositories. Configure the four `SWARM_EXECUTOR_*_TOKEN` values identically in the Grok Bot and Swarm VM Runner environment files, using four independent random 32-byte-or-longer values.
 5. In Swarm VM Runner, set `SWARM_EXECUTOR_PUBLIC_KEY_HOST_FILE=./secrets/grok-swarm-executor.pub` and use `docker-compose.swarm.yml` when starting the stack. Set `SWARM_EXECUTOR_PUBLIC_KEY_FILE=/run/secrets/grok-swarm-executor.pub`.
 6. Optionally set `SWARM_DEFAULT_REPOSITORY` and `SWARM_DEFAULT_BRANCH` so a job with an empty workspace knows which repository to clone. Do not set a repository containing secrets or code the worker is not authorized to modify.
-7. Start both compose projects on the shared network. The Swarm workers reach Grok Bot at `http://grok-bot:3000/api/swarm/execute`.
+7. Set `SWARM_COORDINATOR_URL=http://coordinator:4100` in Grok Bot. Before executing any agent task, Grok Bot forwards the worker's role-scoped coordinator credential and claim token to the coordinator's `/validate` endpoint. The coordinator must be attached to the same external network. Start both compose projects on the shared network. The Swarm workers reach Grok Bot at `http://grok-bot:3000/api/swarm/execute`.
 
 Run the focused evidence tests with `npm run test:swarm`.
 

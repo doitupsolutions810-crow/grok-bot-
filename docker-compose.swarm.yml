@@ -1,4 +1,10 @@
 services:
   grok-bot:
+    networks: [default, swarm-integration]
     volumes:
       - ${SWARM_EXECUTOR_SIGNING_KEY_HOST_FILE:?set to a protected Ed25519 private-key file}:/run/secrets/grok-swarm-executor-ed25519.pem:ro
+
+networks:
+  swarm-integration:
+    external: true
+    name: ${SWARM_INTEGRATION_NETWORK:-swarm-integration}

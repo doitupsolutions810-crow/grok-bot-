@@ -1,0 +1,4 @@
+services:
+  grok-bot:
+    volumes:
+      - ${SWARM_EXECUTOR_SIGNING_KEY_HOST_FILE:?set to a protected Ed25519 private-key file}:/run/secrets/grok-swarm-executor-ed25519.pem:ro

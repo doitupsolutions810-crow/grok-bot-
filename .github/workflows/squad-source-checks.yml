@@ -41,6 +41,7 @@ jobs:
           node --check src/server.js
           node --check src/router.js
           node --check src/agents/runtime.js
+          node --check src/agents/tool-outcome.js
           node --check src/agents/swarm-evidence.js
           node --check src/tools/terminal.js
           node --check src/tools/web.js

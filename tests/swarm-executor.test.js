@@ -57,6 +57,9 @@ test("coordinator claim validation rejects wrong response identity, expiry, and 
   const wrong = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-evil", tenant: "test-tenant", role: "tester", workerId: "tester-1" }) }) });
   assert.equal(wrong.ok, false);
   assert.equal(wrong.status, 409);
+  const wrongTenant = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ valid: true, jobId: "job-1", tenant: "other-tenant", role: "tester", workerId: "tester-1" }) }) });
+  assert.equal(wrongTenant.ok, false);
+  assert.equal(wrongTenant.status, 409);
   const expired = await validateCoordinatorClaim({ ...base, fetchImpl: async () => ({ ok: false, status: 409 }) });
   assert.equal(expired.status, 409);
   const unavailable = await validateCoordinatorClaim({ ...base, fetchImpl: async () => { throw new Error("offline"); } });

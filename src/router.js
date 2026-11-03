@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   loadAgents, listBots, findAgent, runAgent, runOrchestrated,
@@ -17,6 +18,7 @@ import {
 } from "./observability/traces.js";
 import { transcribe, speak } from "./voice/voice.js";
 import { visionTool } from "./tools/vision.js";
+import { buildSwarmEvidence } from "./agents/swarm-evidence.js";
 
 export function makeRouter({ tools, docker }) {
   const r = Router();
@@ -42,6 +44,88 @@ export function makeRouter({ tools, docker }) {
     await remember(session, "assistant", answer);
     return { agent, answer };
   };
+
+  r.post("/swarm/execute", async (req, res) => {
+    const expectedToken = process.env.SWARM_EXECUTOR_TOKEN || "";
+    const supplied = /^Bearer (.+)$/.exec(req.headers.authorization || "")?.[1] || "";
+    if (expectedToken.length < 32) return res.status(503).json({ error: "Swarm executor token is not configured" });
+    const expectedBytes = Buffer.from(expectedToken);
+    const suppliedBytes = Buffer.from(supplied);
+    if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
+      return res.status(401).json({ error: "unauthorized Swarm executor" });
+    }
+    const { jobId, role, objective } = req.body || {};
+    if (typeof jobId !== "string" || !/^[A-Za-z0-9_.-]{1,80}$/.test(jobId)
+        || !["debugger", "coder", "tester", "governance"].includes(role)
+        || typeof objective !== "string" || !objective.trim() || objective.length > 2000) {
+      return res.status(400).json({ error: "jobId, specialist role and 1..2000 character objective are required" });
+    }
+    const executor = process.env.SWARM_EXECUTOR_ID || "";
+    const keyFile = process.env.SWARM_EXECUTOR_SIGNING_KEY_FILE || "";
+    if (!executor || !keyFile) return res.status(503).json({ error: "executor identity and Ed25519 signing key file are required" });
+    const roleAgentIds = {
+      debugger: process.env.SWARM_DEBUGGER_AGENT_ID || "swarm-debugger",
+      coder: process.env.SWARM_CODER_AGENT_ID || "swarm-coder",
+      tester: process.env.SWARM_TESTER_AGENT_ID || "swarm-tester",
+      governance: process.env.SWARM_GOVERNANCE_AGENT_ID || "swarm-governance",
+    };
+    const agentId = roleAgentIds[role];
+    const agent = findAgent(agentId);
+    if (!agent || agent.id !== agentId) return res.status(503).json({ error: "configured specialist agent is missing: " + agentId });
+    const slug = ("swarm-" + jobId).toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 48);
+    const runId = "swarm-" + jobId + "-" + role;
+    const prior = replay(runId);
+    const cached = prior?.events?.findLast((event) => event.kind === "swarm.result")?.result;
+    if (cached) return res.status(cached.status === "succeeded" ? 200 : 422).json({ ...cached, cached: true });
+    const startedAt = new Date().toISOString();
+    const prompt = [
+      "You are executing one specialist stage of a real AVRONE/Swarm software job.",
+      "Work only in your persistent per-job sandbox workspace. Do not claim actions you did not execute.",
+      "Use your actual tools. Do not reveal or search for secrets. Do not access host paths or Docker socket.",
+      "Return exactly one JSON object matching your role's required evidence schema. No markdown fences.",
+      "Job ID: " + jobId,
+      "Role: " + role,
+      "Objective: " + objective,
+      role === "debugger" ? "Required JSON: {diagnosis:string,reproduction:string}. Reproduce with a real tool call." :
+      role === "coder" ? "Required JSON: {artifacts:[{path:string,sha256:'sha256:<64 lowercase hex>'}]}. Patch only scoped files and hash every changed artifact." :
+      role === "tester" ? "Required JSON: {tests:[{command:string,exit_code:0}]}. Run actual tests and report actual exit codes." :
+      "Required JSON: {decision:'approve'|'reject',checks:[{name:string,passed:boolean}]}. Independently inspect the work and verify artifact hashes and tests."
+    ].join("\n\n");
+    let answer;
+    try {
+      answer = await runAgent(agent, prompt, tools, {
+        runId,
+        agentName: slug,
+        maxSteps: Math.min(20, Math.max(1, Number(process.env.SWARM_AGENT_MAX_STEPS || 12))),
+      });
+      if (answer && typeof answer === "object" && answer.pendingApproval) {
+        answer = JSON.stringify({ blocked: "human approval required; no specialist success asserted" });
+      }
+    } catch (error) {
+      answer = JSON.stringify({ error: String(error?.message || error) });
+    }
+    const completedAt = new Date().toISOString();
+    const trace = replay(runId);
+    let signed;
+    try {
+      signed = buildSwarmEvidence({
+        jobId, role, executor, runId, answer,
+        events: trace?.events || [], startedAt, completedAt,
+        privateKeyPem: readFileSync(keyFile),
+      });
+    } catch (error) {
+      return res.status(503).json({ error: "could not create signed execution evidence: " + String(error?.message || error) });
+    }
+    const result = {
+      status: signed.evidence.status,
+      answer: typeof answer === "string" ? answer : JSON.stringify(answer),
+      evidence: signed.evidence,
+      evidence_signature: signed.signature,
+      cached: false,
+    };
+    emit(runId, "swarm.result", { result });
+    return res.status(result.status === "succeeded" ? 200 : 422).json(result);
+  });
 
   r.get("/health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   r.get("/docker/containers", async (req, res) => {

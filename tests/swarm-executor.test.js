@@ -113,7 +113,7 @@ test("coder evidence lists only safe changed paths and SHA-256 digests", async (
   const { execute } = harness({ role: "coder", inventory });
   const out = await execute({ jobId: "job-3", role: "coder", objective: "Implement the requested patch." });
   assert.equal(out.status, 200);
-  assert.deepEqual(out.body.evidence.report.artifacts, [{ path: "src/fix.js", sha256: "b".repeat(64) }]);
+  assert.deepEqual(out.body.evidence.report.artifacts, [{ path: "src/fix.js", sha256: "sha256:" + "b".repeat(64) }]);
 });
 
 test("tester evidence requires a successful test command", async () => {

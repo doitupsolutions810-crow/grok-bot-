@@ -37,7 +37,8 @@ export const browserTool = {
     try {
       const ctx = browser.contexts()[0] || (await browser.newContext());
       const page = ctx.pages()[0] || (await ctx.newPage());
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      const status = response?.status() ?? 0;
       if (action === "click" && selector) {
         await page.click(selector);
         await page.waitForTimeout(500);
@@ -47,7 +48,7 @@ export const browserTool = {
       }
       const title = await page.title();
       const content = await page.evaluate(() => document.body.innerText);
-      return { title, url: page.url(), content: content.slice(0, 12_000) };
+      return { ok: status >= 200 && status < 400, exitCode: status >= 200 && status < 400 ? 0 : status || 1, status, title, url: page.url(), content: content.slice(0, 12_000) };
     } finally {
       await browser.close();   // closes the CDP connection, not the shared browser
     }

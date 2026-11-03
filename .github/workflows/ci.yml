@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: "24"
       - name: Syntax check signed swarm bridge
-        run: node --check src/server.js && node --check src/swarm/executor.js
+        run: node --check src/server.js && node --check src/swarm/executor.js && node --check src/tools/terminal.js
       - name: Swarm evidence and failure-gate tests
         run: npm run test:swarm
 

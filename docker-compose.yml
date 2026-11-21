@@ -15,17 +15,37 @@ services:
       VOLUMES: 0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   grok-bot:
     build: .
     container_name: grok-bot
     restart: unless-stopped
-    ports: ["3000:3000"]
+    init: true
+    stop_grace_period: 30s
+    ports:
+      - "${GROK_PUBLISH_ADDR:-127.0.0.1}:${GROK_PUBLISH_PORT:-3000}:3000"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     # Lets the in-container AVRONE bridge reach a host-launched AVRONE on Linux too.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       PORT: 3000
+      GROK_AUTH_REQUIRED: ${GROK_AUTH_REQUIRED:-false}
+      GROK_AUTH_USERNAME: ${GROK_AUTH_USERNAME:-crow}
+      GROK_AUTH_PASSWORD: ${GROK_AUTH_PASSWORD:-}
       DOCKER_HOST: tcp://socket-proxy:2375      # no raw socket mount anymore
       LLM_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434

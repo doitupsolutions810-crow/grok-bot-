@@ -4,7 +4,7 @@ No inbound network listener; runtime services remain on loopback.
 python3 crow_bridge.py --config crow-bridge-private.json
 """
 from __future__ import annotations
-import argparse, concurrent.futures, hashlib, json, os, pathlib, platform, re
+import argparse, base64, concurrent.futures, hashlib, json, os, pathlib, platform, re
 import socket, sqlite3, sys, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 
 MAX_RESPONSE = 2_000_000
@@ -30,6 +30,19 @@ def redact(value):
     text=re.sub(r'(?i)(bearer\s+)[A-Za-z0-9._~+/-]+',r'\1[redacted]',text)
     text=re.sub(r'(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+',r'\1[redacted]',text)
     return text[:19000]
+
+def grok_api_auth_headers(env=None):
+    """Build optional Basic Auth for the loopback Grok API; never log the secret."""
+    env = os.environ if env is None else env
+    username = str(env.get('GROK_API_USERNAME') or '')
+    password = str(env.get('GROK_API_PASSWORD') or '')
+    if bool(username) != bool(password):
+        raise BridgeError('Set both GROK_API_USERNAME and GROK_API_PASSWORD when Grok Basic Auth is enabled')
+    if not username:
+        return {}
+    token = base64.b64encode((username + ':' + password).encode('utf-8')).decode('ascii')
+    return {'Authorization': 'Basic ' + token}
+
 
 def request_json(url, data=None, headers=None, timeout=15, method=None):
     payload=json.dumps(data).encode() if data is not None else None
@@ -96,6 +109,7 @@ class Bridge:
         if cfg.get('schema')!='crow-bridge/v1' or not cfg.get('siteAccess') or not cfg.get('bridgeKey'):raise BridgeError('Pairing file is invalid')
         self.site=cfg['site'].rstrip('/')
         self.headers={'OAI-Sites-Authorization':'Bearer '+cfg['siteAccess'],'X-Crow-Bridge-Key':cfg['bridgeKey']}
+        self.grok_headers=grok_api_auth_headers()
         self.endpoints={k:local_endpoint(v) for k,v in endpoints.items()}
         self.owner=socket.gethostname()+'-'+uuid.uuid4().hex[:8]
         self.receipts=Receipts(receipt_path)
@@ -103,7 +117,8 @@ class Bridge:
     def site_call(self,path,data=None):
         return request_json(self.site+'/api/hub/'+path,data,self.headers,timeout=25)
     def local(self,engine,path,data=None,timeout=15,method=None):
-        return request_json(self.endpoints[engine]+path,data,timeout=timeout,method=method)
+        headers=self.grok_headers if engine=='grok' else None
+        return request_json(self.endpoints[engine]+path,data,headers=headers,timeout=timeout,method=method)
     def probe(self):
         result={k:{'ready':False,'detail':'No live response observed'} for k in self.endpoints}
         configuration=[]
@@ -181,7 +196,11 @@ class Bridge:
             if not slug:raise BridgeError('Grok Bot did not create the captured agent configuration')
         objective='Agent instructions:\n'+a['instructions']+'\n\nMission:\n'+j['objective']
         payload={'agentId':slug,'message':objective,'mode':j['mode'],'session':j['conversation']}
-        req=urllib.request.Request(self.endpoints['grok']+'/api/chat/stream',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
+        req=urllib.request.Request(
+            self.endpoints['grok']+'/api/chat/stream',
+            data=json.dumps(payload).encode(),
+            headers={'Content-Type':'application/json',**self.grok_headers},
+        )
         if j['mode']=='chat':
             note('Executing Grok Bot chat through the tool-capable agent runtime.')
             out=self.local('grok','/api/chat',payload,timeout=1800)

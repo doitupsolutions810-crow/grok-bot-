@@ -56,6 +56,9 @@ jobs:
             exit 1
           fi
 
+      - name: Unit regression tests
+        run: docker compose exec -T grok-bot npm test
+
       - name: Live agent tests (real inference, docker exec, browser)
         run: docker compose exec -T grok-bot node tests/live.test.js
 

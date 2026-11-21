@@ -11,6 +11,14 @@ MAX_RESPONSE = 2_000_000
 class BridgeError(Exception): pass
 class Uncertain(BridgeError): pass
 
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Neither pairing credentials nor loopback requests may follow another URL."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise BridgeError('HTTP redirect refused; configured runtime origins must respond directly')
+
+def open_response(req, timeout):
+    return urllib.request.build_opener(NoRedirects()).open(req, timeout=timeout)
+
 def local_endpoint(value):
     u=urllib.parse.urlsplit(value)
     if u.scheme not in ('http','https') or u.hostname not in ('localhost','127.0.0.1','::1') or u.username or u.password or u.query or u.fragment or u.path not in ('','/'):
@@ -27,25 +35,43 @@ def request_json(url, data=None, headers=None, timeout=15, method=None):
     payload=json.dumps(data).encode() if data is not None else None
     req=urllib.request.Request(url,data=payload,headers={'Content-Type':'application/json',**(headers or {})},method=method)
     try:
-        with urllib.request.urlopen(req,timeout=timeout) as r:
+        with open_response(req,timeout) as r:
             raw=r.read(MAX_RESPONSE+1)
             if len(raw)>MAX_RESPONSE: raise BridgeError('Response size limit exceeded')
-            return json.loads(raw)
+            try:return json.loads(raw)
+            except (json.JSONDecodeError,UnicodeDecodeError):raise BridgeError('Malformed JSON response') from None
     except urllib.error.HTTPError as e:
+        if payload is not None and e.code>=500:
+            raise Uncertain('Runtime returned HTTP '+str(e.code)+' after dispatch; inspect runtime evidence before resuming') from None
         raise BridgeError('HTTP '+str(e.code)+' from '+urllib.parse.urlsplit(url).path) from None
+    except (urllib.error.URLError,TimeoutError,ConnectionError) as e:
+        if payload is not None:
+            raise Uncertain('Request transport failed after dispatch; inspect runtime evidence before resuming') from None
+        raise BridgeError('Runtime connection failed: '+redact(type(e).__name__)) from None
 
 def stream_objects(response):
     """Parse bounded SSE or NDJSON; never treat truncated JSON as a completed run."""
-    for raw in response:
+    completed=False
+    while True:
+        raw=response.readline(250001)
+        if not raw:break
         if len(raw)>250000: raise BridgeError('Provider stream frame too large')
-        line=raw.decode('utf-8',errors='strict').strip()
-        if not line or line.startswith(':') or line.startswith('event:'):continue
+        try:line=raw.decode('utf-8',errors='strict').strip()
+        except UnicodeDecodeError:raise BridgeError('Malformed provider stream encoding') from None
+        if not line or line.startswith((':','event:','id:','retry:')):continue
         if line.startswith('data:'):line=line[5:].strip()
+        if not line:continue
+        if completed:raise BridgeError('Provider sent output after completion')
         if line=='[DONE]':
+            completed=True
             yield {'done':True}
             continue
-        try: yield json.loads(line)
+        try: frame=json.loads(line)
         except json.JSONDecodeError: raise BridgeError('Malformed provider stream frame') from None
+        if not isinstance(frame,dict):raise BridgeError('Provider stream frame must be an object')
+        if 'done' in frame and type(frame['done']) is not bool:raise BridgeError('Invalid provider completion flag')
+        if frame.get('done') is True:completed=True
+        yield frame
 
 class Receipts:
     def __init__(self,path):
@@ -65,7 +91,7 @@ class Receipts:
 class Bridge:
     def __init__(self,cfg,endpoints,receipt_path):
         site=urllib.parse.urlsplit(cfg.get('site',''))
-        if site.scheme!='https' or site.netloc!='crow-os-grok-workspace.sedateaphid32.chatgpt.site' or site.path not in ('','/'):
+        if site.scheme!='https' or site.netloc!='crow-os-grok-workspace.sedateaphid32.chatgpt.site' or site.path not in ('','/') or site.query or site.fragment:
             raise BridgeError('Pairing file does not name this official workspace')
         if cfg.get('schema')!='crow-bridge/v1' or not cfg.get('siteAccess') or not cfg.get('bridgeKey'):raise BridgeError('Pairing file is invalid')
         self.site=cfg['site'].rstrip('/')
@@ -82,20 +108,25 @@ class Bridge:
         result={k:{'ready':False,'detail':'No live response observed'} for k in self.endpoints}
         configuration=[]
         def check(engine,path):
-            try:return self.local(engine,path,timeout=4)
+            try:
+                value=self.local(engine,path,timeout=4)
+                if not isinstance(value,dict):return {'error':'Runtime status response must be an object'}
+                return value
             except Exception as e:return {'error':redact(e)}
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             futures={k:pool.submit(check,k,'/api/tags' if k=='ollama' else '/api/status') for k in self.endpoints}
             observed={k:f.result() for k,f in futures.items()}
-        o=observed['ollama'];models=[m.get('name') for m in o.get('models',[]) if isinstance(m,dict)] if isinstance(o,dict) else []
+        o=observed['ollama'];raw_models=o.get('models',[])
+        models=[m['name'] for m in raw_models if isinstance(m,dict) and isinstance(m.get('name'),str) and m['name'].strip()] if isinstance(raw_models,list) else []
         result['ollama']={'ready':bool(models),'models':models,'detail':str(len(models))+' installed model(s)' if models else o.get('error','No models installed')}
         g=observed['grok']
         result['grok']={'ready':g.get('ready') is True and not g.get('degraded'),'detail':'Boot self-tests passed' if g.get('ready') is True else g.get('error','Grok Bot is not ready')}
         c=observed['crow']
-        result['crow']={'ready':bool(c.get('version')) and c.get('ollama',{}).get('reachable') is True and c.get('ollama',{}).get('active_installed') is True,'ledger':c.get('ledger'),'detail':'Crow OS '+str(c.get('version','unavailable'))}
+        crow_ollama=c.get('ollama') if isinstance(c.get('ollama'),dict) else {}
+        result['crow']={'ready':bool(c.get('version')) and crow_ollama.get('reachable') is True and crow_ollama.get('active_installed') is True,'ledger':c.get('ledger'),'detail':'Crow OS '+str(c.get('version','unavailable'))}
         a=observed['avrone']
-        # AVRONE status must have a version or known runtime shape, never arbitrary JSON.
-        result['avrone']={'ready':isinstance(a,dict) and a.get('provider')=='ollama' and a.get('model') in models and isinstance(a.get('tools'),int) and a.get('tools')>0 and isinstance(a.get('boot'),str),'detail':a.get('error','AVRONE '+str(a.get('provider','unavailable'))+' / '+str(a.get('model','unknown model')))}
+        # AVRONE has no version field; require its actual runtime status shape.
+        result['avrone']={'ready':a.get('provider')=='ollama' and a.get('model') in models and type(a.get('tools')) is int and a.get('tools')>0 and isinstance(a.get('boot'),str) and bool(a['boot'].strip()),'detail':a.get('error','AVRONE '+str(a.get('provider','unavailable'))+' / '+str(a.get('model','unknown model')))}
         approvals=[]
         if result['grok']['ready']:
             try:
@@ -157,15 +188,18 @@ class Bridge:
             if out.get('error') or not out.get('answer'):raise BridgeError(out.get('error','Grok Bot returned no completion'))
             return out['answer'] if isinstance(out['answer'],str) else json.dumps(out['answer'],ensure_ascii=False)
         output='';completed=False;pending=False
-        with urllib.request.urlopen(req,timeout=1800) as response:
-            for frame in stream_objects(response):
-                if frame.get('error'):raise BridgeError(str(frame['error']))
-                if frame.get('note'):note(str(frame['note']))
-                if frame.get('delta'):
-                    output+=str(frame['delta'])
-                    if len(output)>180000:raise BridgeError('Model output exceeded workspace report limit')
-                if frame.get('pending') or frame.get('approval'):pending=True
-                if frame.get('done'):completed=True
+        try:
+            with open_response(req,1800) as response:
+                for frame in stream_objects(response):
+                    if frame.get('error'):raise BridgeError(str(frame['error']))
+                    if frame.get('note'):note(str(frame['note']))
+                    if frame.get('delta'):
+                        output+=str(frame['delta'])
+                        if len(output)>180000:raise BridgeError('Model output exceeded workspace report limit')
+                    if frame.get('pending') or frame.get('approval'):pending=True
+                    if frame.get('done') is True:completed=True
+        except (urllib.error.URLError,TimeoutError,ConnectionError):
+            raise Uncertain('Provider stream transport failed after dispatch; inspect runtime evidence before resuming') from None
         if pending and not output:raise Uncertain('Agent paused for tool approval. Open Approvals in the workspace.')
         if output.startswith('orchestration failed:'):raise BridgeError(output)
         if not completed or not output.strip():raise Uncertain('Provider stream ended without a complete response; the request will not be replayed automatically.')
@@ -205,9 +239,11 @@ class Bridge:
         return answer if isinstance(answer,str) else json.dumps(answer,ensure_ascii=False)
     def run_ollama(self,j,note):
         state=self.site_call('state')
-        history=sorted([m for m in state.get('messages',[]) if m.get('conversation')==j['conversation']],key=lambda m:m.get('createdAt',0))[-16:]
+        # A later queued message must not replace this captured mission. The
+        # current objective is always the final user message sent to the model.
+        history=sorted([m for m in state.get('messages',[]) if m.get('conversation')==j['conversation'] and m.get('jobId')!=j.get('id') and isinstance(m.get('createdAt'),(int,float)) and m['createdAt']<j.get('createdAt',0)],key=lambda m:m['createdAt'])[-15:]
         messages=[{'role':'system','content':j['agent']['instructions']}]+[{'role':m['role'],'content':m['text']} for m in history if m['role'] in ('user','assistant')]
-        if not history:messages.append({'role':'user','content':j['objective']})
+        messages.append({'role':'user','content':j['objective']})
         note('Running installed Ollama model '+j['model']+' locally. This direct mode has no build tools.')
         out=self.local('ollama','/api/chat',{'model':j['model'],'messages':messages,'stream':False},timeout=1800)
         if out.get('error'):raise BridgeError(str(out['error']))

@@ -117,7 +117,7 @@ class Bridge:
     def site_call(self,path,data=None):
         return request_json(self.site+'/api/hub/'+path,data,self.headers,timeout=25)
     def local(self,engine,path,data=None,timeout=15,method=None):
-        headers=self.grok_headers if engine=='grok' else None
+        headers=getattr(self,'grok_headers',{}) if engine=='grok' else None
         return request_json(self.endpoints[engine]+path,data,headers=headers,timeout=timeout,method=method)
     def probe(self):
         result={k:{'ready':False,'detail':'No live response observed'} for k in self.endpoints}
@@ -199,7 +199,7 @@ class Bridge:
         req=urllib.request.Request(
             self.endpoints['grok']+'/api/chat/stream',
             data=json.dumps(payload).encode(),
-            headers={'Content-Type':'application/json',**self.grok_headers},
+            headers={'Content-Type':'application/json',**getattr(self,'grok_headers',{})},
         )
         if j['mode']=='chat':
             note('Executing Grok Bot chat through the tool-capable agent runtime.')

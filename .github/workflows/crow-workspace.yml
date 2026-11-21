@@ -18,3 +18,22 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -s integrations/crow-workspace -p 'test_*.py' -v
       - run: python -m py_compile integrations/crow-workspace/crow_bridge.py integrations/crow-workspace/install_workspace.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Check and test Grok Bot Basic Auth middleware
+        run: |
+          node --check src/middleware/basic-auth.js
+          node --check src/server.js
+          node --test tests/basic-auth.test.js
+      - name: Validate loopback-only Compose profiles and protected config
+        env:
+          GROK_PUBLISH_ADDR: 127.0.0.1
+          GROK_PUBLISH_PORT: "3000"
+          GROK_AUTH_REQUIRED: "true"
+          GROK_AUTH_USERNAME: ci
+          GROK_AUTH_PASSWORD: ci-only-test-password
+        run: |
+          docker compose config --quiet
+          docker compose --profile full config --quiet
+          docker compose config --format json | python -c "import json,sys; p=json.load(sys.stdin)['services']['grok-bot']['ports'][0]; assert p['host_ip']=='127.0.0.1' and str(p['published'])=='3000', p"

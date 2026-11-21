@@ -26,6 +26,10 @@ jobs:
           node --check src/middleware/basic-auth.js
           node --check src/server.js
           node --test tests/basic-auth.test.js
+      - name: Validate shell scripts and live-test syntax
+        run: |
+          sh -n scripts/wait-boot.sh verify.sh
+          node --check tests/live.test.js
       - name: Validate loopback-only Compose profiles and protected config
         env:
           GROK_PUBLISH_ADDR: 127.0.0.1

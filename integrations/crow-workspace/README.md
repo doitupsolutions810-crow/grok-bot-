@@ -46,3 +46,7 @@ python3 -m py_compile integrations/crow-workspace/crow_bridge.py integrations/cr
 ```
 
 The Site's source repository additionally contains its API integration tests, TypeScript checks, and build configuration. Unit tests use bounded fixtures and do not prove a real model, Docker boot, or the user's current local configuration.
+
+## Robustness round — 2026-11-21
+
+The installer now pins the reviewed offline candidates in Crow OS PR #8 and AVRONE PR #31. Both remain draft and unmerged. Crow OS passed 86 offline checks with its live Ollama check skipped; AVRONE passed 3,334 offline checks with one skip and 362 integration checks excluded. The bridge passed 32 checks, including real loopback HTTP transport; provider output fixtures are explicitly not live inference. The next required gate is installed Ollama plus authenticated bridge/chat dispatch and full acceptance. An existing healthy runtime may be reused and has not thereby been upgraded to these candidates.

@@ -6,8 +6,8 @@ Existing healthy loopback services are reused. Installed models are reused.
 import argparse,json,os,pathlib,platform,shutil,subprocess,sys,time,urllib.request
 SOURCES={
  'grok-bot-':('https://github.com/doitupsolutions810-crow/grok-bot-.git','c4d5e95b7a23639c103552ea1cc0470e86c98a21'),
- 'crow-os':('https://github.com/doitupsolutions810-crow/crow-os.git','2fb8a05a62480c5b6d0e269a9ef5a45791dd5abf'),
- 'Avrone':('https://github.com/doitupsolutions810-crow/Avrone.git','5cceb5257d2e03499070d727b56c4847de1578e0')
+ 'crow-os':('https://github.com/doitupsolutions810-crow/crow-os.git','2c1edb0888a44d970c3dfc6cdfe3fb00bfa314f6'),
+ 'Avrone':('https://github.com/doitupsolutions810-crow/Avrone.git','ada01ff379b9a8cea6d37f557bcf7169415182ff')
 }
 def run(argv,cwd=None,env=None):subprocess.run(argv,cwd=cwd,env=env,check=True)
 def reachable(url,check):

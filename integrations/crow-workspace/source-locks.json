@@ -5,11 +5,17 @@
   },
   "crow": {
     "repository": "doitupsolutions810-crow/crow-os",
-    "sha": "2fb8a05a62480c5b6d0e269a9ef5a45791dd5abf"
+    "sha": "2c1edb0888a44d970c3dfc6cdfe3fb00bfa314f6",
+    "mergeState": "unmerged",
+    "verification": "offline suite passed; live acceptance pending",
+    "pullRequest": "https://github.com/doitupsolutions810-crow/crow-os/pull/8"
   },
   "avrone": {
     "repository": "doitupsolutions810-crow/Avrone",
-    "sha": "5cceb5257d2e03499070d727b56c4847de1578e0"
+    "sha": "ada01ff379b9a8cea6d37f557bcf7169415182ff",
+    "mergeState": "unmerged",
+    "verification": "offline suite passed; integration acceptance pending",
+    "pullRequest": "https://github.com/doitupsolutions810-crow/Avrone/pull/31"
   },
   "ollama": {
     "api": "https://docs.ollama.com/api/chat",

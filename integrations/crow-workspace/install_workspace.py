@@ -5,8 +5,9 @@ Existing healthy loopback services are reused. Installed models are reused.
 """
 import argparse,json,os,pathlib,platform,shutil,subprocess,sys,time,urllib.request
 SOURCES={
- 'grok-bot-':('https://github.com/doitupsolutions810-crow/grok-bot-.git','c4d5e95b7a23639c103552ea1cc0470e86c98a21'),
- 'crow-os':('https://github.com/doitupsolutions810-crow/crow-os.git','2c1edb0888a44d970c3dfc6cdfe3fb00bfa314f6'),
+ # Reviewed PR branch revisions: loopback binding/auth bridge and persistent Crow workspace.
+ 'grok-bot-':('https://github.com/doitupsolutions810-crow/grok-bot-.git','84c51a58bd03ed604a7c159e4b9586d5c659f64f'),
+ 'crow-os':('https://github.com/doitupsolutions810-crow/crow-os.git','b25283890f299aa283c26077d96b55b8368afa2b'),
  'Avrone':('https://github.com/doitupsolutions810-crow/Avrone.git','ada01ff379b9a8cea6d37f557bcf7169415182ff')
 }
 def run(argv,cwd=None,env=None):subprocess.run(argv,cwd=cwd,env=env,check=True)

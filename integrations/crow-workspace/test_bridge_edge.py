@@ -229,3 +229,92 @@ class BridgeEdgeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class GrokBasicAuthTests(unittest.TestCase):
+    def test_credentials_require_both_username_and_password(self):
+        self.assertEqual(bridge.grok_api_auth_headers({}), {})
+        with self.assertRaisesRegex(bridge.BridgeError, "Set both"):
+            bridge.grok_api_auth_headers({"GROK_API_USERNAME": "operator"})
+        with self.assertRaisesRegex(bridge.BridgeError, "Set both"):
+            bridge.grok_api_auth_headers({"GROK_API_PASSWORD": "secret"})
+
+    def test_basic_auth_is_encoded_and_attached_only_to_grok_runtime_calls(self):
+        import base64
+
+        expected = "Basic " + base64.b64encode("operator:päss:phrase".encode()).decode()
+        headers = bridge.grok_api_auth_headers({
+            "GROK_API_USERNAME": "operator",
+            "GROK_API_PASSWORD": "päss:phrase",
+        })
+        self.assertEqual(headers, {"Authorization": expected})
+
+        class Handler(BaseHTTPRequestHandler):
+            received = []
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                self.received.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            instance = bridge.Bridge.__new__(bridge.Bridge)
+            instance.endpoints = {
+                "grok": f"http://127.0.0.1:{server.server_port}",
+                "crow": f"http://127.0.0.1:{server.server_port}",
+            }
+            instance.grok_headers = headers
+            self.assertEqual(instance.local("grok", "/api/status"), {"ok": True})
+            self.assertEqual(instance.local("crow", "/api/status"), {"ok": True})
+            self.assertEqual(Handler.received, [expected, None])
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
+    def test_squad_stream_includes_basic_auth_header_without_logging_it(self):
+        import base64
+
+        instance = bridge.Bridge.__new__(bridge.Bridge)
+        instance.endpoints = {"grok": "http://127.0.0.1:3000"}
+        instance.grok_headers = bridge.grok_api_auth_headers({
+            "GROK_API_USERNAME": "operator",
+            "GROK_API_PASSWORD": "hidden-secret",
+        })
+        calls = []
+        def local(engine, path, data=None, **kwargs):
+            calls.append((path, data))
+            if path == "/api/agents" and data is None:
+                return {"bots": []}
+            if path == "/api/agents":
+                return {"id": "agent-test"}
+            raise AssertionError(path)
+        instance.local = local
+        request = []
+        def open_response(req, timeout):
+            request.append(req)
+            return io.BytesIO(b'data: {"delta":"squad answer"}\\n\\ndata: [DONE]\\n\\n')
+        job = {
+            "id": "mission-auth",
+            "agent": {
+                "id": "agent-123", "version": 1, "name": "Workspace Researcher",
+                "instructions": "Answer with evidence", "tools": []
+            },
+            "model": "qwen2.5:3b",
+            "mode": "squad",
+            "conversation": "thread-auth",
+            "objective": "Check authentication wiring",
+        }
+        with patch.object(bridge, "open_response", side_effect=open_response):
+            result = instance.run_grok(job, lambda _: None)
+        self.assertEqual(result, "squad answer")
+        self.assertEqual(request[0].get_header("Authorization"),
+                         "Basic " + base64.b64encode(b"operator:hidden-secret").decode())
+        self.assertNotIn("hidden-secret", repr(calls))
+        self.assertNotIn("hidden-secret", result)
+

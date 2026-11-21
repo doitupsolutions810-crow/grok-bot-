@@ -34,8 +34,8 @@ def redact(value):
 def grok_api_auth_headers(env=None):
     """Build optional Basic Auth for the loopback Grok API; never log the secret."""
     env = os.environ if env is None else env
-    username = str(env.get('GROK_API_USERNAME') or '')
-    password = str(env.get('GROK_API_PASSWORD') or '')
+    username = str(env.get('GROK_API_USERNAME') or env.get('GROK_AUTH_USERNAME') or '')
+    password = str(env.get('GROK_API_PASSWORD') or env.get('GROK_AUTH_PASSWORD') or '')
     if bool(username) != bool(password):
         raise BridgeError('Set both GROK_API_USERNAME and GROK_API_PASSWORD when Grok Basic Auth is enabled')
     if not username:

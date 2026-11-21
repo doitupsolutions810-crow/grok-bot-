@@ -30,9 +30,15 @@ Full profile adds Whisper STT, Piper TTS, and ComfyUI image generation:
 docker compose --profile full up -d --build
 ```
 
-Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
+Open `http://127.0.0.1:3000` — the web console (Chat · Team · Runs · Ledger · Approvals). The Compose profile publishes Grok Bot on loopback only; it does not expose the API or browser console to the LAN or Internet.
 
-To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
+For browser/API authentication, set `GROK_AUTH_REQUIRED=true`, `GROK_AUTH_USERNAME`, and a strong `GROK_AUTH_PASSWORD` in `.env`. The server refuses to boot if authentication is enabled without both credentials. The browser displays a Basic Auth prompt; API and SSE clients send the same Basic Auth header. Only `GET /api/health` is unauthenticated for Docker healthchecks.
+
+When running the outbound Crow workspace bridge against a protected Grok Bot, export the same credentials as `GROK_API_USERNAME` and `GROK_API_PASSWORD` before starting the bridge. The installer forwards credentials from the effective private Compose configuration when it starts the Grok stack. The bridge sends them only to the fixed loopback Grok origin; it never sends them to the hosted workspace. Keep the bridge pairing file and generated Compose JSON private (mode 0600).
+
+Do not publish port 3000 directly to the Internet. For remote access use the owner-private workspace's outbound bridge or a private HTTPS proxy/tunnel. When using a proxy, preserve the Authorization header and terminate TLS there.
+
+To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. The readiness script reads auth settings from the running container and uses them without printing the password. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
 
 ## What's inside
 
@@ -63,6 +69,9 @@ To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60
 
 Everything is env-driven (see `.env.example`). Key knobs:
 
+- `GROK_PUBLISH_ADDR` / `GROK_PUBLISH_PORT` — published host address and port. The default bind is `127.0.0.1:3000`.
+- `GROK_AUTH_REQUIRED` / `GROK_AUTH_USERNAME` / `GROK_AUTH_PASSWORD` — optional HTTP Basic Auth for browser, API, and SSE requests. Set a strong password before exposing the service through any proxy or tunnel.
+- `GROK_API_USERNAME` / `GROK_API_PASSWORD` — optional local bridge credentials when the Grok runtime has Basic Auth enabled. The bridge never logs these values.
 - `MODELS_REQUIRED` — models pulled on boot AND valid teammate models (CI uses `qwen2.5:3b,nomic-embed-text`)
 - `GROK_MAX_PARALLEL` / `GROK_MIN_PARALLEL` / `GROK_WANT_PARALLEL` / `GROK_THERMAL_MAX_C` — Governor
 - `GROK_SQUAD_N` / `GROK_SQUAD_STEPS` / `GROK_DEEP_ROUNDS` / `GROK_MAX_SPAWN_DEPTH` — Trinity

@@ -10,18 +10,33 @@ SOURCES={
  'Avrone':('https://github.com/doitupsolutions810-crow/Avrone.git','ada01ff379b9a8cea6d37f557bcf7169415182ff')
 }
 def run(argv,cwd=None,env=None):subprocess.run(argv,cwd=cwd,env=env,check=True)
-def reachable(url,check):
+def reachable(url,check,headers=None):
  try:
-  with urllib.request.urlopen(url,timeout=3) as r:return check(json.load(r))
+  req=urllib.request.Request(url,headers=headers or {})
+  with urllib.request.urlopen(req,timeout=3) as r:return check(json.load(r))
  except Exception:return False
+def response_status(url):
+ try:
+  with urllib.request.urlopen(url,timeout=3) as r:return r.status
+ except urllib.error.HTTPError as error:return error.code
+ except Exception:return None
+def grok_auth_headers():
+ username=os.environ.get('GROK_API_USERNAME','')
+ password=os.environ.get('GROK_API_PASSWORD','')
+ if bool(username)!=bool(password):
+  raise RuntimeError('Set both GROK_API_USERNAME and GROK_API_PASSWORD for a protected Grok Bot runtime')
+ if not username:return {}
+ import base64
+ token=base64.b64encode((username+':'+password).encode('utf-8')).decode('ascii')
+ return {'Authorization':'Basic '+token}
 def launch(argv,log,cwd=None,env=None):
  with log.open('ab') as output:
   process=subprocess.Popen(argv,cwd=cwd,env=env,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
  return process.pid
-def wait(url,check,log,seconds=120):
+def wait(url,check,log,seconds=120,headers=None):
  deadline=time.monotonic()+seconds
  while time.monotonic()<deadline:
-  if reachable(url,check):return
+  if reachable(url,check,headers=headers):return
   time.sleep(2)
  raise RuntimeError('Service not ready. Inspect '+str(log))
 def main():
@@ -69,8 +84,16 @@ def main():
  if not reachable('http://127.0.0.1:8710/api/status',lambda x:bool(x.get('boot')) and isinstance(x.get('tools'),int)):
   launch([str(py),'-m','avrone.server'],logs/'avrone.log',cwd=root/'Avrone',env=common)
   wait('http://127.0.0.1:8710/api/status',lambda x:bool(x.get('boot')) and isinstance(x.get('tools'),int),logs/'avrone.log')
- if not a.skip_grok and not reachable('http://127.0.0.1:3000/api/status',lambda x:x.get('ready') is True and not x.get('degraded')):
-  if not shutil.which('docker'):raise RuntimeError('Docker is required to start Grok Bot. Other services are retained; re-run when Docker is running.')
+ if not a.skip_grok:
+  grok_status_url='http://127.0.0.1:3000/api/status'
+  grok_ready=lambda x:x.get('ready') is True and not x.get('degraded')
+  grok_headers=grok_auth_headers()
+  if not reachable(grok_status_url,grok_ready,headers=grok_headers):
+   if response_status(grok_status_url)==401:
+    if grok_headers:
+     raise RuntimeError('Grok Bot rejected GROK_API_USERNAME/GROK_API_PASSWORD. No second stack was started.')
+    raise RuntimeError('Grok Bot is already Basic-Auth protected. Export GROK_API_USERNAME and GROK_API_PASSWORD before running the installer/bridge.')
+   if not shutil.which('docker'):raise RuntimeError('Docker is required to start Grok Bot. Other services are retained; re-run when Docker is running.')
   run(['docker','info'],env=os.environ)
   grok=root/'grok-bot-'
   if a.grok_config:
@@ -84,11 +107,22 @@ def main():
   for name,service in compose['services'].items():
    service.pop('container_name',None)
    for port in service.get('ports',[]):port['host_ip']='127.0.0.1'
-  bot=compose['services']['grok-bot'];bot['environment']['AVRONE_URL']='http://host.docker.internal:8710'
+  bot=compose['services']['grok-bot']
+  bot['environment']['AVRONE_URL']='http://host.docker.internal:8710'
+  bot_env=bot.get('environment') or {}
+  auth_required=str(bot_env.get('GROK_AUTH_REQUIRED','false')).strip().lower() in ('1','true','yes','on')
+  if auth_required:
+   username=str(bot_env.get('GROK_AUTH_USERNAME') or '')
+   password=str(bot_env.get('GROK_AUTH_PASSWORD') or '')
+   if not username or ':' in username or not password:
+    raise RuntimeError('GROK_AUTH_REQUIRED needs GROK_AUTH_USERNAME (without colon) and GROK_AUTH_PASSWORD in the Grok Compose environment')
+   os.environ['GROK_API_USERNAME']=username
+   os.environ['GROK_API_PASSWORD']=password
+  grok_headers=grok_auth_headers()
   # Core profile only; image, speech and extra-model services remain opt-in.
   stack=root/'compose.private.json';stack.write_text(json.dumps(compose,indent=2));stack.chmod(0o600)
   run(['docker','compose','-p','crow-workspace','-f',str(stack),'up','-d','--build'],cwd=grok)
-  wait('http://127.0.0.1:3000/api/status',lambda x:x.get('ready') is True and not x.get('degraded'),logs/'grok-boot.log',seconds=3600)
+  wait(grok_status_url,grok_ready,logs/'grok-boot.log',seconds=3600,headers=grok_headers)
   run(['docker','compose','-p','crow-workspace','-f',str(stack),'exec','-T','grok-bot','node','tests/live.test.js'],cwd=grok)
  (root/'source-locks.json').write_text(json.dumps({k:{'url':v[0],'sha':v[1]} for k,v in SOURCES.items()},indent=2))
  bridge=pathlib.Path(__file__).with_name('crow_bridge.py')

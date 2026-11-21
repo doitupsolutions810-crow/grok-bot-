@@ -8,7 +8,9 @@ async function connectCDP() {
   const configured = process.env.BROWSER_WS || "http://browser:3000";
   // A bare ws://host:port URL has no CDP browser id. Use the HTTP discovery
   // endpoint so Playwright can fetch /json/version and resolve that id.
-  const endpoint = /^wss?:\\/\\/[^/]+\\/?$/i.test(configured)
+  const parsed = new URL(configured);
+  const endpoint = (parsed.protocol === "ws:" || parsed.protocol === "wss:")
+      && parsed.pathname === "/"
     ? configured.replace(/^ws/i, "http")
     : configured;
   let lastErr;

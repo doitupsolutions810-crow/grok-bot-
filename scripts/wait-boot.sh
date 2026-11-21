@@ -35,8 +35,32 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 LAST_RESTARTS=-1
 
+# Read the effective runtime credentials from the running container without
+# printing them. This avoids sourcing an arbitrary .env file into the shell.
+AUTH_USERNAME=""
+AUTH_PASSWORD=""
+AUTH_REQUIRED="false"
+load_runtime_auth() {
+  _cid="$(docker compose ps -q grok-bot 2>/dev/null || true)"
+  [ -n "$_cid" ] || return 0
+  _env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$_cid" 2>/dev/null || true)"
+  AUTH_REQUIRED="$(printf '%s\n' "$_env" | sed -n 's/^GROK_AUTH_REQUIRED=//p' | tail -n 1)"
+  AUTH_USERNAME="$(printf '%s\n' "$_env" | sed -n 's/^GROK_AUTH_USERNAME=//p' | tail -n 1)"
+  AUTH_PASSWORD="$(printf '%s\n' "$_env" | sed -n 's/^GROK_AUTH_PASSWORD=//p' | tail -n 1)"
+  [ -n "$AUTH_REQUIRED" ] || AUTH_REQUIRED="false"
+}
+fetch_status() {
+  if [ "$AUTH_REQUIRED" = "true" ] || [ "$AUTH_REQUIRED" = "1" ] || [ "$AUTH_REQUIRED" = "yes" ]; then
+    [ -n "$AUTH_USERNAME" ] && [ -n "$AUTH_PASSWORD" ] || return 1
+    curl --connect-timeout 3 --max-time 5 --user "$AUTH_USERNAME:$AUTH_PASSWORD" -fsS http://localhost:3000/api/status -o "$STATUS_FILE" 2>/dev/null
+  else
+    curl --connect-timeout 3 --max-time 5 -fsS http://localhost:3000/api/status -o "$STATUS_FILE" 2>/dev/null
+  fi
+}
+
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  if curl --connect-timeout 3 --max-time 5 -fsS http://localhost:3000/api/status -o "$STATUS_FILE" 2>/dev/null; then
+  load_runtime_auth
+  if fetch_status; then
     if grep -q '"ready":true' "$STATUS_FILE" 2>/dev/null; then
       echo "BOOT READY: server self-test gate passed."
       cat "$STATUS_FILE"

@@ -1,0 +1,27 @@
+{
+  "grok": {
+    "repository": "doitupsolutions810-crow/grok-bot-",
+    "sha": "84c51a58bd03ed604a7c159e4b9586d5c659f64f",
+    "mergeState": "unmerged",
+    "verification": "35 bridge tests plus Node Basic Auth tests and protected loopback Compose validation passed on Python 3.11 and 3.12; no user-host runtime was observed",
+    "pullRequest": "https://github.com/doitupsolutions810-crow/grok-bot-/pull/5"
+  },
+  "crow": {
+    "repository": "doitupsolutions810-crow/crow-os",
+    "sha": "b25283890f299aa283c26077d96b55b8368afa2b",
+    "mergeState": "unmerged",
+    "verification": "workspace app tests and Docker image smoke passed on Python 3.11 and 3.12; the separate core kernel probe job remains failing (16 failures, 14 errors in its 76-case run)",
+    "pullRequest": "https://github.com/doitupsolutions810-crow/crow-os/pull/10"
+  },
+  "avrone": {
+    "repository": "doitupsolutions810-crow/Avrone",
+    "sha": "ada01ff379b9a8cea6d37f557bcf7169415182ff",
+    "mergeState": "unmerged",
+    "verification": "offline suite passed; integration acceptance pending",
+    "pullRequest": "https://github.com/doitupsolutions810-crow/Avrone/pull/31"
+  },
+  "ollama": {
+    "api": "https://docs.ollama.com/api/chat",
+    "installation": "https://docs.ollama.com/quickstart"
+  }
+}

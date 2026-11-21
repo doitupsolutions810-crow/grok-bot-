@@ -40,8 +40,10 @@ export async function preinstall(docker, { log = console.log } = {}) {
 // The CDP server answers plain HTTP GET /json/version on the same port as
 // the websocket (BROWSER_WS), which makes it a perfect readiness probe.
 function browserProbe() {
-  const ws = process.env.BROWSER_WS || "ws://browser:3000";
-  return `${ws.replace(/^ws/, "http").replace(/\\/+$/, "")}/json/version`;
+  const endpoint = new URL(process.env.BROWSER_WS || "ws://browser:3000");
+  if (endpoint.protocol === "ws:") endpoint.protocol = "http:";
+  if (endpoint.protocol === "wss:") endpoint.protocol = "https:";
+  return `${endpoint.origin}/json/version`;
 }
 
 async function waitForCDP(url, log, { timeout = 120_000 } = {}) {

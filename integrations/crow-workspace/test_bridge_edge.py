@@ -298,7 +298,7 @@ class GrokBasicAuthTests(unittest.TestCase):
         request = []
         def open_response(req, timeout):
             request.append(req)
-            return io.BytesIO(b'data: {"delta":"squad answer"}\\n\\ndata: [DONE]\\n\\n')
+            return io.BytesIO(b'data: {"delta":"squad answer"}\n\ndata: [DONE]\n\n')
         job = {
             "id": "mission-auth",
             "agent": {

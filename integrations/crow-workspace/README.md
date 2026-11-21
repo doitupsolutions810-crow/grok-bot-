@@ -23,6 +23,23 @@ The installer uses a separate `~/.crow-workspace/runtime`, reuses healthy instal
 
 Grok Bot requires a working Docker daemon. The installer uses the upstream core Compose profile, binds published ports to loopback, waits for real boot self-tests, and runs its live tests. It does not manufacture a ready state when Docker, models, or a bridge are unavailable. A cold model/image pull can take substantial time. The bundled installer has not been run against the user's computer.
 
+### Grok Bot authentication
+
+The reviewed Grok Bot candidate publishes port `3000` on `127.0.0.1` by default. Keep that bind when using the outbound bridge; the bridge never requires an inbound public port.
+
+For a new install, enable app-level authentication in the shell that runs the installer:
+
+```bash
+export GROK_AUTH_REQUIRED=true
+export GROK_AUTH_USERNAME=crow
+export GROK_AUTH_PASSWORD='replace-with-a-long-unique-password'
+python3 install_workspace.py --config /path/to/crow-bridge-private.json
+```
+
+The installer resolves those settings through Docker Compose, validates the username/password, and forwards them only to the child bridge process as `GROK_API_USERNAME` / `GROK_API_PASSWORD`. For an already running protected Grok Bot, export the matching `GROK_API_USERNAME` and `GROK_API_PASSWORD` before starting `crow_bridge.py`. The bridge attaches Basic Auth only to requests sent to the fixed loopback Grok Bot origin; it does not forward those credentials to the hosted workspace, Crow OS, AVRONE, or Ollama.
+
+When the installer detects a protected existing Grok Bot and the credentials are missing or wrong, it fails rather than starting a second stack. The Grok UI, API, and SSE routes require Basic Auth; only the minimal `GET /api/health` is public for Docker healthchecks. Do not expose port 3000 directly to a LAN or the Internet. For browser access from outside the host, use the private outbound workspace or a trusted HTTPS proxy/tunnel, preserve the Authorization header, and keep the proxy origin owner-restricted.
+
 ## Honest execution states
 
 - Queued: saved request awaiting an available runtime; no model response is fabricated.

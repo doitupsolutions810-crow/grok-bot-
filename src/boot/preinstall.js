@@ -58,9 +58,20 @@ function pullImage(docker, image, log) {
     }));
 }
 
-async function modelPresent(ollama, model) {
-  const tags = await fetch(`${ollama}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-  return !!tags.models?.some(m => m.name === model);
+export function sameModelName(installed, requested) {
+  if (typeof installed !== "string" || typeof requested !== "string") return false;
+  // Ollama treats an omitted tag as ":latest" in model names.
+  const canonical = name => name.includes(":") ? name : `${name}:latest`;
+  return canonical(installed) === canonical(requested);
+}
+
+export async function modelPresent(ollama, model) {
+  const tags = await fetch(`${ollama}/api/tags`)
+    .then(r => r.ok ? r.json() : ({ models: [] }))
+    .catch(() => ({ models: [] }));
+  return Array.isArray(tags?.models) && tags.models.some(
+    item => item && typeof item.name === "string" && sameModelName(item.name, model)
+  );
 }
 
 async function pullModel(ollama, model, log) {

@@ -1,9 +1,19 @@
 name: live-tests
 on:
   push: { branches: [main] }
+  pull_request:
   workflow_dispatch:
 
 jobs:
+  config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate default and full Docker Compose profiles
+        run: |
+          docker compose config --quiet
+          docker compose --profile full config --quiet
+
   live:
     runs-on: ubuntu-24.04    # pinned: ubuntu-latest migrated to Ubuntu 26 on 2026-10-19 (actions/runner-images#14748)
     timeout-minutes: 90

@@ -44,9 +44,9 @@ load_runtime_auth() {
   _cid="$(docker compose ps -q grok-bot 2>/dev/null || true)"
   [ -n "$_cid" ] || return 0
   _env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$_cid" 2>/dev/null || true)"
-  AUTH_REQUIRED="$(printf '%s\\n' "$_env" | sed -n 's/^GROK_AUTH_REQUIRED=//p' | tail -n 1)"
-  AUTH_USERNAME="$(printf '%s\\n' "$_env" | sed -n 's/^GROK_AUTH_USERNAME=//p' | tail -n 1)"
-  AUTH_PASSWORD="$(printf '%s\\n' "$_env" | sed -n 's/^GROK_AUTH_PASSWORD=//p' | tail -n 1)"
+  AUTH_REQUIRED="$(printf '%s\n' "$_env" | sed -n 's/^GROK_AUTH_REQUIRED=//p' | tail -n 1)"
+  AUTH_USERNAME="$(printf '%s\n' "$_env" | sed -n 's/^GROK_AUTH_USERNAME=//p' | tail -n 1)"
+  AUTH_PASSWORD="$(printf '%s\n' "$_env" | sed -n 's/^GROK_AUTH_PASSWORD=//p' | tail -n 1)"
   [ -n "$AUTH_REQUIRED" ] || AUTH_REQUIRED="false"
 }
 fetch_status() {

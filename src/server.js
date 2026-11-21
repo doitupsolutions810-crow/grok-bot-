@@ -21,10 +21,15 @@ import { avroneTool } from "./tools/avrone.js";
 import { skillTools, playbookTools } from "./tools/skills.js";
 import { startXTrigger } from "./tools/xtrigger.js";
 import { traceTools } from "./observability/traces.js";
+import { createBasicAuth, readBasicAuthConfig } from "./middleware/basic-auth.js";
 
 const PORT = process.env.PORT || 3000;
 
 async function main() {
+  // Validate security configuration before pulling images/models or opening ports.
+  const authConfig = readBasicAuthConfig();
+  if (authConfig.enabled) console.log("[boot] HTTP Basic authentication enabled");
+
   // 1. Connect to the host's Docker installation (real socket / socket-proxy)
   const docker = await bootDocker();
 
@@ -69,6 +74,17 @@ async function main() {
 
   // 8. Serve
   const app = express();
+  app.disable("x-powered-by");
+  // Protect the UI, API (including SSE), and all static assets. Only the minimal
+  // /api/health endpoint is public so Docker can perform a healthcheck.
+  app.use(createBasicAuth(authConfig));
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+    next();
+  });
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", makeRouter({ tools, docker }));
   app.get("/api/status", (req, res) => res.json({

@@ -4,8 +4,17 @@
 
 const BASE = process.env.GROKBOT_URL || "http://localhost:3000";
 const j = (r) => r.json();
+const username = process.env.GROK_API_USERNAME || process.env.GROK_AUTH_USERNAME || "";
+const password = process.env.GROK_API_PASSWORD || process.env.GROK_AUTH_PASSWORD || "";
+if (Boolean(username) !== Boolean(password)) {
+  throw new Error("Set both GROK_API_USERNAME/GROK_AUTH_USERNAME and GROK_API_PASSWORD/GROK_AUTH_PASSWORD for protected live tests");
+}
+const AUTH_HEADERS = username
+  ? { authorization: "Basic " + Buffer.from(`${username}:${password}`, "utf8").toString("base64") }
+  : {};
+const get = (path) => fetch(`${BASE}/api${path}`, { headers: AUTH_HEADERS });
 const post = (path, body) => fetch(`${BASE}/api${path}`, {
-  method: "POST", headers: { "content-type": "application/json" },
+  method: "POST", headers: { ...AUTH_HEADERS, "content-type": "application/json" },
   body: JSON.stringify(body || {})
 });
 
@@ -14,7 +23,7 @@ async function test(name, fn) {
   catch (e) { console.error(`FAIL ${name} — ${e.message}`); return false; }
 }
 
-const r = await fetch(`${BASE}/api/status`).then(j);
+const r = await get("/status").then(j);
 if (!r.ready) throw new Error("boot self-test did not pass");
 if (!Array.isArray(r.selftest) || r.selftest.length === 0) {
   throw new Error("boot status did not include a non-empty self-test result list");
@@ -45,11 +54,11 @@ const results = [
     }).then(j);
     if (!created.ok) throw new Error(JSON.stringify(created));
     const patched = await fetch(`${BASE}/api/agents/${created.id}`, {
-      method: "PATCH", headers: { "content-type": "application/json" },
+      method: "PATCH", headers: { ...AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ job: "verify live tests and mark flaky ones" })
     }).then(j);
     if (!patched.ok) throw new Error(JSON.stringify(patched));
-    const deleted = await fetch(`${BASE}/api/agents/${created.id}`, { method: "DELETE" }).then(j);
+    const deleted = await fetch(`${BASE}/api/agents/${created.id}`, { method: "DELETE", headers: AUTH_HEADERS }).then(j);
     if (!deleted.ok) throw new Error(JSON.stringify(deleted));
     return `created → patched → deleted ${created.id}`;
   }),
@@ -65,23 +74,23 @@ const results = [
   }),
 
   await test("CodeX replay: run lifecycle logged", async () => {
-    const runs = await fetch(`${BASE}/api/runs`).then(j);
+    const runs = await get("/runs").then(j);
     if (!runs.length) throw new Error("no runs recorded");
-    const run = await fetch(`${BASE}/api/runs/${runs[0].runId}`).then(j);
+    const run = await get(`/runs/${runs[0].runId}`).then(j);
     const kinds = run.events.map(e => e.kind);
     if (!kinds.includes("run.start") || !kinds.includes("run.done")) throw new Error(`kinds: ${kinds.join(",")}`);
     return `${runs[0].runId}: ${run.events.length} events, corrupt lines skipped`;
   }),
 
   await test("governor: health-gated parallelism", async () => {
-    const g = await fetch(`${BASE}/api/governor`).then(j);
+    const g = await get("/governor").then(j);
     if (!["healthy", "throttled", "critical"].includes(g.state)) throw new Error(`state: ${g.state}`);
     if (!(g.target >= 1 && g.target <= g.max)) throw new Error(`target ${g.target} out of [1, ${g.max}]`);
     return `state ${g.state}, target ${g.target}/${g.max} lanes`;
   }),
 
   await test("ledger: hash chain intact", async () => {
-    const l = await fetch(`${BASE}/api/ledger`).then(j);
+    const l = await get("/ledger").then(j);
     if (!l.intact) throw new Error("tamper detected — chain broken");
     return `${l.entries.length} entries, chain intact`;
   }),
@@ -90,7 +99,7 @@ const results = [
     const comment = `live-test feedback ${Date.now()}`;
     const fb = await post("/feedback", { comment, good: true }).then(j);
     if (!fb.ok) throw new Error(JSON.stringify(fb));
-    const recent = await fetch(`${BASE}/api/feedback`).then(j);
+    const recent = await get("/feedback").then(j);
     if (!recent.some(f => f.comment === comment)) throw new Error("feedback not listed");
     return `stored id ${fb.id} and listed`;
   })

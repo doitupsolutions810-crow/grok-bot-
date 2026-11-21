@@ -1,0 +1,20 @@
+name: Crow workspace bridge
+on:
+  push:
+    paths: ["integrations/crow-workspace/**", ".github/workflows/crow-workspace.yml"]
+  pull_request:
+    paths: ["integrations/crow-workspace/**", ".github/workflows/crow-workspace.yml"]
+jobs:
+  bridge:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s integrations/crow-workspace -p 'test_*.py' -v
+      - run: python -m py_compile integrations/crow-workspace/crow_bridge.py integrations/crow-workspace/install_workspace.py

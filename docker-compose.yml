@@ -20,7 +20,8 @@ services:
     build: .
     container_name: grok-bot
     restart: unless-stopped
-    ports: ["3000:3000"]
+    # Keep the unauthenticated control plane local; expose remotely only via an authenticated TLS proxy/private tunnel.
+    ports: ["${GROK_BIND_ADDR:-127.0.0.1}:${GROK_PORT:-3000}:3000"]
     # Lets the in-container AVRONE bridge reach a host-launched AVRONE on Linux too.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -64,12 +65,13 @@ services:
     # GPU: uncomment deploy.resources.devices [driver: nvidia, count: all, capabilities: [gpu]]
 
   browser:
-    image: mcr.microsoft.com/playwright:v1.64.1-jammy
+    build:
+      context: .
+      dockerfile: browser-service/Dockerfile
+    image: grok-browser:local
     container_name: grok-browser
     restart: unless-stopped
-    command: node /app/computer.js
     volumes:
-      - ./browser-service/computer.js:/app/computer.js:ro
       - browser_profile:/profile        # logins + cookies persist across restarts & bots
 
   whisper:

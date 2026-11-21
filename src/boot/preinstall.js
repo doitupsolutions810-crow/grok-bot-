@@ -32,7 +32,7 @@ export async function preinstall(docker, { log = console.log } = {}) {
   //    needs its Chromium up before the browser self-test runs, or the boot
   //    would race a cold container.
   await waitForHttp(`${ollama}/api/tags`, log, "ollama");
-  await waitForHttp(browserProbe(), log, "browser");
+  await waitForCDP(browserProbe(), log);
   await waitForHttp(process.env.COMFYUI_URL || "http://comfyui:8188", log, "comfyui", { optional: true });
   return true;
 }
@@ -40,8 +40,29 @@ export async function preinstall(docker, { log = console.log } = {}) {
 // The CDP server answers plain HTTP GET /json/version on the same port as
 // the websocket (BROWSER_WS), which makes it a perfect readiness probe.
 function browserProbe() {
-  const ws = process.env.BROWSER_WS || "ws://browser:3000";
-  return `${ws.replace(/^ws/, "http").replace(/\/+$/, "")}/json/version`;
+  const endpoint = new URL(process.env.BROWSER_WS || "ws://browser:3000");
+  if (endpoint.protocol === "ws:") endpoint.protocol = "http:";
+  if (endpoint.protocol === "wss:") endpoint.protocol = "https:";
+  return `${endpoint.origin}/json/version`;
+}
+
+async function waitForCDP(url, log, { timeout = 120_000 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+      if (response.ok) {
+        const payload = await response.json();
+        if (typeof payload?.webSocketDebuggerUrl === "string"
+            && payload.webSocketDebuggerUrl.startsWith("ws")) {
+          log(`[boot] browser CDP reachable (${String(payload.Browser || "Chromium").slice(0, 80)})`);
+          return true;
+        }
+      }
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`browser did not expose a valid CDP websocket endpoint at ${url}`);
 }
 
 function pullImage(docker, image, log) {
@@ -58,9 +79,20 @@ function pullImage(docker, image, log) {
     }));
 }
 
-async function modelPresent(ollama, model) {
-  const tags = await fetch(`${ollama}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-  return !!tags.models?.some(m => m.name === model);
+export function sameModelName(installed, requested) {
+  if (typeof installed !== "string" || typeof requested !== "string") return false;
+  // Ollama treats an omitted tag as ":latest" in model names.
+  const canonical = name => name.includes(":") ? name : `${name}:latest`;
+  return canonical(installed) === canonical(requested);
+}
+
+export async function modelPresent(ollama, model) {
+  const tags = await fetch(`${ollama}/api/tags`)
+    .then(r => r.ok ? r.json() : ({ models: [] }))
+    .catch(() => ({ models: [] }));
+  return Array.isArray(tags?.models) && tags.models.some(
+    item => item && typeof item.name === "string" && sameModelName(item.name, model)
+  );
 }
 
 async function pullModel(ollama, model, log) {

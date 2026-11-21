@@ -30,7 +30,9 @@ Full profile adds Whisper STT, Piper TTS, and ComfyUI image generation:
 docker compose --profile full up -d --build
 ```
 
-Open `http://localhost:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
+Open `http://127.0.0.1:3000` — the web console (Chat · Team · Runs · Ledger · Approvals).
+
+**Network security:** the Compose service binds to loopback by default because the current console/API does not enforce its token middleware. Do not set `GROK_BIND_ADDR=0.0.0.0` or publish port 3000 directly to the Internet. For remote use, place it behind an authenticated HTTPS reverse proxy or private VPN/tunnel that authenticates users before forwarding traffic. The existing `/auth/token` endpoint is not an authentication boundary while it remains publicly reachable.
 
 To verify the stack without GitHub Actions, run `./verify.sh`. It waits up to 60 minutes by default for a true ready state, detects early crashes/restart loops, runs the real live suite, and writes the verdict to `data/VERIFY.md`. Use `VERIFY_BOOT_TIMEOUT_SECONDS=7200 ./verify.sh` on slower hosts. A skipped AVRONE check is reported as **partial**, not system-green.
 

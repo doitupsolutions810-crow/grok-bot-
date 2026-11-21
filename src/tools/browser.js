@@ -5,12 +5,19 @@ import { chromium } from "playwright";
 // are shared between bots. We reuse the existing context/pages rather than
 // creating new ones, so sessions stay warm.
 async function connectCDP() {
-  const ws = process.env.BROWSER_WS || "ws://browser:3000";
+  const configured = process.env.BROWSER_WS || "http://browser:3000";
+  // A bare ws://host:port URL has no CDP browser id. Use the HTTP discovery
+  // endpoint so Playwright can fetch /json/version and resolve that id.
+  const parsed = new URL(configured);
+  const endpoint = (parsed.protocol === "ws:" || parsed.protocol === "wss:")
+      && parsed.pathname === "/"
+    ? configured.replace(/^ws/i, "http")
+    : configured;
   let lastErr;
   // 3 attempts: a cold/restarting browser container must not fail the boot
   // self-test (or a live tool call) on a transient refusal.
   for (let attempt = 0; attempt < 3; attempt++) {
-    try { return await chromium.connectOverCDP(ws); }
+    try { return await chromium.connectOverCDP(endpoint); }
     catch (e) {
       lastErr = e;
       if (attempt < 2) await new Promise(r => setTimeout(r, 1000));

@@ -784,3 +784,16 @@ test("skills: CRLF / BOM / quoted SKILL.md frontmatter parses; no-frontmatter fa
   assert.match((await load.run({})).error, /name required/);
   process.env.SKILLS_DIR = prev;
 });
+
+// ================= round 9: live CI boot loop =================
+test("boot: untagged model names match Ollama's tagged listing (CI boot restart-loop root cause)", async () => {
+  const { hasModel, normModel } = await import("../../src/boot/models.js");
+  const tags = { models: [{ name: "qwen2.5:3b" }, { name: "nomic-embed-text:latest" }, { name: "registry.local:5000/team/llama" }] };
+  assert.ok(hasModel(tags, "nomic-embed-text"));          // was false forever → 15 min wait → throw
+  assert.ok(hasModel(tags, "nomic-embed-text:latest"));
+  assert.ok(hasModel(tags, "Qwen2.5:3b"));
+  assert.ok(!hasModel(tags, "qwen2.5:7b"));
+  assert.ok(hasModel(tags, "registry.local:5000/team/llama:latest"));   // port colon ≠ tag
+  assert.ok(!hasModel({}, "x")); assert.ok(!hasModel(tags, ""));
+  assert.equal(normModel("llava"), "llava:latest");
+});

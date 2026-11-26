@@ -1,3 +1,4 @@
+import { hasModel } from "./models.js";
 import Docker from "dockerode";
 
 // Connects to the real Docker daemon at boot — directly via socket, or through
@@ -81,7 +82,7 @@ async function ensureModel(model, log) {
   }
   const present = async () => {
     const list = await fetch(`${base}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-    return !!list.models?.some(m => m.name === model);
+    return hasModel(list, model);
   };
   if (await present()) { log(`[boot] Model ready: ${model}`); return; }
   log(`[boot] Pulling model ${model} (one-time, may take a while)...`);

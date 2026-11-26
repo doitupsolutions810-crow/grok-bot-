@@ -1,3 +1,4 @@
+import { hasModel } from "./models.js";
 import Docker from "dockerode";
 
 const REQUIRED_IMAGES = [
@@ -60,16 +61,20 @@ function pullImage(docker, image, log) {
 
 async function modelPresent(ollama, model) {
   const tags = await fetch(`${ollama}/api/tags`).then(r => r.json()).catch(() => ({ models: [] }));
-  return !!tags.models?.some(m => m.name === model);
+  return hasModel(tags, model);
 }
 
 async function pullModel(ollama, model, log) {
   if (await modelPresent(ollama, model)) { log(`[boot] model present: ${model}`); return true; }
   log(`[boot] pulling model ${model}...`);
+  // the poll below is the source of truth, but a pull Ollama rejected outright is logged
   await fetch(`${ollama}/api/pull`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ model, stream: false })
-  }).catch(() => { /* the poll below is the source of truth, not the POST */ });
+  }).then(async r => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) log(`[boot] pull ${model} reported: ${j.error || `HTTP ${r.status}`}`);
+  }).catch(e => log(`[boot] pull ${model} request failed: ${e.message}`));
   const deadline = Date.now() + MODEL_PULL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await modelPresent(ollama, model)) { log(`[boot] model ready: ${model}`); return true; }

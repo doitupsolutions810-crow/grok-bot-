@@ -1195,3 +1195,39 @@ test("harness API: list, get, approve (409 unless passed), reject", async () => 
   delete process.env.HARNESS_ROOT; delete process.env.HARNESS_TEST_CMD;
   void root;
 });
+
+// ================= round 16: hostile file names, misbehaving council members =================
+test("/images refuses traversal, encoded slashes, other types, and hidden names", async () => {
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json());
+  app.use("/api", makeRouter({ tools: [], docker: { listContainers: async () => [] } }));
+  const s = app.listen(0); s.unref();
+  const u = `http://127.0.0.1:${s.address().port}/api/images/`;
+  for (const f of ["..%2F..%2Fetc%2Fpasswd", "..%2Fx.png", "x.png%00.txt", "a%2Fb.png", "x.jpg", "...png", "x.PNG.sh", "%2e%2e.png"]) {
+    const r = await fetch(u + f);
+    assert.ok([400, 404].includes(r.status), `${f} -> ${r.status}`);
+    assert.notEqual(r.headers.get("content-type"), "image/png", f);
+  }
+  assert.equal((await fetch(u + "missing-123.png")).status, 404);
+});
+
+test("council survives members that throw, return objects, return nothing, or hang up mid-round", async () => {
+  const d = await import("../../src/agents/dialogue.js");
+  const agents = { a: { id: "a", name: "A" }, b: { id: "b", name: "B" }, c: { id: "c", name: "C" } };
+  let n = 0;
+  const runAgent = async (a) => {
+    n++;
+    if (a.id === "a") throw new Error("model exploded");
+    if (a.id === "b") return n % 2 ? { weird: true } : undefined;
+    return "C here. EUREKA: a council must outlive any one member.";
+  };
+  const out = await d.council({ topic: "stress", agents: ["a", "b", "c", "a", "ghost"], rounds: 2, runAgent, tools: [], getAgent: id => agents[id] });
+  const turns = out.dialogue.filter(m => m.from !== "human");
+  assert.equal(turns.length, 6, "3 unique known members x 2 rounds");
+  assert.ok(turns.some(m => m.from === "a" && /could not take my turn.*model exploded/.test(m.text)));
+  assert.ok(turns.filter(m => m.from === "b").every(m => typeof m.text === "string" && m.text.length));
+  await assert.rejects(d.council({ topic: "x", agents: ["a", "ghost"], runAgent, tools: [], getAgent: id => agents[id] }), /at least 2/);
+  await assert.rejects(d.council({ topic: "   ", agents: ["a", "b"], runAgent, tools: [], getAgent: id => agents[id] }), /topic/);
+  const many = await d.council({ topic: "cap", agents: ["c", "c"].concat(["a", "b"]), rounds: 99, runAgent: async () => "ok", tools: [], getAgent: id => agents[id] });
+  assert.equal(many.dialogue.filter(m => m.from !== "human").length, 3 * 4, "rounds cap at 4");
+});

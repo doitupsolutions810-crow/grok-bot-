@@ -686,3 +686,58 @@ test("X tools: empty text/query rejected; x.post always needs review; emoji not 
   const api = await full();
   assert.equal((await api("POST", "/tools/terminal/invoke", { command: "echo safe" })).status, 200);
 });
+
+// ================= round 7: routing, DeepSearch, Think, RAG vectors, voice =================
+test("dispatch: whole words only, and instruction-only custom agents can be routed to", async () => {
+  await call("POST", "/agents", { name: "Kubernetes Wrangler", instructions: "You handle helm charts and kubernetes clusters." });
+  assert.equal(mods.team.dispatch("our kubernetes helm deploy is stuck").id, "kubernetes-wrangler");
+  await call("POST", "/agents", { name: "Tester", job: "test plans" });
+  assert.notEqual(mods.team.dispatch("what's the latest news").id, "tester");   // 'test' ⊄ 'latest'
+  assert.equal(mods.team.dispatch("zzzz qqqq").id, "grok-main");
+});
+
+test("DeepSearch: URL wrapped in prose, dead pages, duplicates, missing browser", async () => {
+  const { deepSearch } = await import("../../src/agents/deepsearch.js");
+  assert.match((await deepSearch("q", null)).synthesis, /needs the browser/);
+  const reads = [];
+  const browser = { run: async ({ url }) => (reads.push(url), url.includes("dead") ? { error: "net::ERR" } : { url, title: "T", content: "facts" }) };
+  replyQueue = [
+    { role: "assistant", content: "Next I'd read <https://dead.example/a>." },
+    { role: "assistant", content: "Try https://good.example/b, it's best." },
+    { role: "assistant", content: "synthesis with [src](https://good.example/b)" },
+    { role: "assistant", content: "https://good.example/b" },          // duplicate → skipped
+    { role: "assistant", content: null },                               // null → stop
+  ];
+  const out = await deepSearch("q", browser, { rounds: 5 });
+  assert.deepEqual(reads, ["https://dead.example/a", "https://good.example/b"]);
+  assert.match(out.synthesis, /synthesis with/);
+  assert.equal(out.sources[0].error, "net::ERR");
+  replyQueue = [];
+});
+
+test("Think: null passes keep prior reasoning; never returns null", async () => {
+  const { thinkAnswer } = await import("../../src/agents/think.js");
+  replyQueue = [{ role: "assistant", content: "r1" }, { role: "assistant", content: null }, { role: "assistant", content: null }];
+  assert.equal(await thinkAnswer("why?", { passes: 2 }), "r1");
+  replyQueue = [];
+});
+
+test("RAG vectors: stored float32 BLOBs decode to the same vector (was byte-by-byte garbage)", async () => {
+  const { blobToVec, cos } = await import("../../src/rag/index.js");
+  const v = Float32Array.from([0.25, -1.5, 3, 0.125]);
+  const blob = Buffer.concat([Buffer.alloc(1), Buffer.from(v.buffer)]).subarray(1);   // unaligned offset
+  assert.deepEqual([...blobToVec(blob)], [...v]);
+  assert.ok(Math.abs(cos(v, blobToVec(blob)) - 1) < 1e-6);
+  assert.equal(cos(v, Float32Array.from([1, 2])), -1);              // other embed model's dims
+  assert.equal(cos(v, new Float32Array(4)), -1);                    // zero vector → not NaN
+});
+
+test("voice: bad voice names / empty text / empty audio fail cleanly", async () => {
+  const voice = await import("../../src/voice/voice.js");
+  assert.equal((await voice.speak("hi", "../../etc/x")).error, "bad voice name");
+  assert.equal((await voice.speak("  ")).error, "text required");
+  await assert.rejects(voice.transcribe(Buffer.alloc(0)), /empty audio/);
+  const api = await full();
+  assert.equal((await api("POST", "/voice/stt", { audioBase64: "====" })).status, 400);
+  assert.equal((await api("POST", "/voice/stt", { audioBase64: "UklGRg==" })).status, 503);   // no backend here
+});

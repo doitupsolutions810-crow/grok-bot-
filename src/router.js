@@ -220,7 +220,8 @@ export function makeRouter({ tools, docker }) {
   r.post("/rag/search", async (req, res) => {
     const q = (req.body || {}).query;
     if (typeof q !== "string" || !q.trim()) return res.status(400).json({ error: "query required" });
-    res.json(await search(q.slice(0, 4000)));
+    try { res.json(await search(q.slice(0, 4000))); }
+    catch (e) { res.status(503).json({ error: e.message }); }
   });
   r.post("/vision", async (req, res) => {
     const { imageBase64, question } = req.body || {};
@@ -230,7 +231,10 @@ export function makeRouter({ tools, docker }) {
   r.post("/voice/stt", async (req, res) => {
     const a = (req.body || {}).audioBase64;
     if (typeof a !== "string" || !a) return res.status(400).json({ error: "audioBase64 required" });
-    res.json({ text: await transcribe(Buffer.from(a, "base64")) });
+    const buf = Buffer.from(a.replace(/^data:[^;,]+;base64,/, ""), "base64");
+    if (!buf.length) return res.status(400).json({ error: "audioBase64 decoded to nothing" });
+    try { res.json({ text: await transcribe(buf) }); }
+    catch (e) { res.status(503).json({ error: e.message }); }
   });
   r.get("/voice/tts", async (req, res) =>
     res.json(await speak(String(req.query.text || "").slice(0, 1000))));

@@ -27,10 +27,14 @@ export function createBot({ name, job, instructions, tools, model, mode, review,
 // Chief-of-staff: pick the best-matching specialist by job overlap, else grok-main
 export function dispatch(task) {
   const bots = listBots();
+  // whole-word matching ("test" no longer matches "latest"), unicode-aware, and a teammate's
+  // name and custom instructions count too, so instruction-only agents can be routed to
+  const words = t => new Set(String(t || "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 3));
+  const taskWords = words(task);
+  const hits = t => [...words(t)].filter(w => taskWords.has(w)).length;
   let best = { bot: null, score: 0 };
   for (const b of bots) {
-    const words = String(b.job || "").toLowerCase().split(/\W+/).filter(w => w.length > 3);
-    const score = words.filter(w => String(task).toLowerCase().includes(w)).length;
+    const score = hits(b.name) * 3 + hits(b.job) * 2 + Math.min(hits(b.instructions), 3);
     if (score > best.score) best = { bot: b, score };
   }
   return best.score > 0 ? toAgent(best.bot)

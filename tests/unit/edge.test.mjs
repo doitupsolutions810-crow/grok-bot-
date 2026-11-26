@@ -1936,3 +1936,17 @@ test("runtime: the nudge fires once, then the agent's real call runs (stub model
   if (saved.c === undefined) delete process.env.MODEL_CHAIN; else process.env.MODEL_CHAIN = saved.c;
   srv.close();
 });
+
+// ================= round 30: council turns that script the rest of the meeting (seen live 03:43 EST) =================
+test("council: an agent's turn stops where it starts writing lines for other speakers", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  const roster = [{ id: "grok-main", name: "Grok Main" }, { id: "edge-critic", name: "Edge Critic" }];
+  // verbatim shape from the live council: grok-main invented a "human:" reply and its own next line
+  const live = "EUREKA: Given the current lack of recent discoveries, we can consider a scenario involving concurrent user interactions.\n\nhuman: I agree. Let's start with a test case where two users try to update the same piece of data simultaneously.\n\ngrok-main: EUREKA: Let's also consider a very large data input scenario.";
+  assert.equal(D.ownTurn(live, roster), "EUREKA: Given the current lack of recent discoveries, we can consider a scenario involving concurrent user interactions.");
+  assert.equal(D.ownTurn("Fine.\n**Edge Critic**: I object", roster), "Fine.");
+  assert.equal(D.ownTurn("The human: element of testing matters.", roster), "The human: element of testing matters.", "mid-line mention kept");
+  assert.equal(D.ownTurn("Plain reply with a next step.", roster), "Plain reply with a next step.");
+  assert.equal(D.ownTurn("human: only invented text", roster), "", "nothing of its own -> empty -> (no reply)");
+  assert.equal(D.ownTurn(null, roster), "");
+});

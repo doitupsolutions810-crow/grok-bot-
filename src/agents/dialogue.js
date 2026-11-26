@@ -156,6 +156,18 @@ export function dialogueTools() {
   ];
 }
 
+// A small model sometimes keeps writing the meeting after its own turn: invented lines for
+// "human:" or a teammate, even for itself. Keep only what it said before the first speaker label.
+export function ownTurn(text, roster = []) {
+  const t = String(text ?? "");
+  const names = ["human", "user", "assistant", "system", ...roster.flatMap(a => [a?.id, a?.name])]
+    .filter(Boolean).map(n => String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const re = new RegExp(`^\\s*(?:\\*\\*)?(?:${names.join("|")})(?:\\*\\*)?\\s*:`, "im");
+  const m = re.exec(t);
+  if (!m) return t.trim();
+  return t.slice(0, m.index).trim();
+}
+
 // ---------- council: a real round-table between named agents ----------
 export async function council({ topic, agents, rounds = 1, runAgent, tools, getAgent, runId = "" }) {
   topic = clean(topic, 2000);
@@ -176,6 +188,8 @@ export async function council({ topic, agents, rounds = 1, runAgent, tools, getA
       try { text = await runAgent(a, prompt, tools, { runId, agentName: a.id, maxSteps: 4 }); }
       catch (e) { text = `I could not take my turn because of an error: ${e.message}`; }
       if (typeof text !== "string") text = JSON.stringify(text);
+      text = ownTurn(text, roster);
+      if (/^Reached max tool steps/.test(text)) text = "(I used all my tool steps this round without writing a reply.)";
       post({ from: a.id, kind: "note", text: text || "(no reply)", runId });
     }
   }

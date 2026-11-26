@@ -1094,3 +1094,20 @@ test("lattice highlights: eurekas first, dedupes, ignores the human/lattice voic
   assert.match((await (await fetch(u + "/lattice/mission")).json()).mission, /edge cases/);
   assert.equal((await (await fetch(u + "/lattice/highlights?runIds=r1")).json()).highlights[0].kind, "eureka");
 });
+
+// ================= round 14: live CI root cause #2 — browser container restart loop =================
+test("browser service: image installs the playwright package at the image's own version; compose builds it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const df = readFileSync(new URL("../../browser-service/Dockerfile", import.meta.url), "utf8");
+  const img = df.match(/^FROM mcr\.microsoft\.com\/playwright:v([\d.]+)-/m);
+  assert.ok(img, "Dockerfile must build FROM the playwright image");
+  assert.match(df, new RegExp(`npm install[^\\n]*playwright@${img[1].replace(/\./g, "\\.")}`), "playwright npm version must match the image");
+  assert.match(df, /require\('playwright'\)/, "build must prove the module resolves");
+  const compose = readFileSync(new URL("../../docker-compose.yml", import.meta.url), "utf8");
+  const svc = compose.split(/\n  browser:\n/)[1].split(/\n  \w[\w-]*:\n/)[0];
+  assert.match(svc, /build: \.\/browser-service/);
+  assert.doesNotMatch(svc, /image: mcr\.microsoft\.com\/playwright/, "the bare playwright image has no playwright module");
+  const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.dependencies.playwright.replace(/^[\^~]/, ""), img[1], "server and browser must speak the same playwright version");
+  assert.match(readFileSync(new URL("../../src/boot/preinstall.js", import.meta.url), "utf8"), new RegExp(`playwright:v${img[1].replace(/\./g, "\\.")}`));
+});

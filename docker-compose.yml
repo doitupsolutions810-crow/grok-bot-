@@ -70,12 +70,10 @@ services:
     # GPU: uncomment deploy.resources.devices [driver: nvidia, count: all, capabilities: [gpu]]
 
   browser:
-    image: mcr.microsoft.com/playwright:v1.64.1-jammy
+    build: ./browser-service           # playwright image + the playwright npm package (see its Dockerfile)
     container_name: grok-browser
     restart: unless-stopped
-    command: node /app/computer.js
     volumes:
-      - ./browser-service/computer.js:/app/computer.js:ro
       - browser_profile:/profile        # logins + cookies persist across restarts & bots
 
   whisper:

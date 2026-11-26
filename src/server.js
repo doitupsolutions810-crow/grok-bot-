@@ -16,6 +16,7 @@ import { imagegenTool } from "./tools/imagegen.js";
 import { visionTool } from "./tools/vision.js";
 import { taskBoardTool } from "./agents/taskboard.js";
 import { teamAskTool } from "./agents/team.js";
+import { dialogueTools } from "./agents/dialogue.js";
 import { spawnTool } from "./tools/spawn.js";
 import { avroneTool } from "./tools/avrone.js";
 import { skillTools, playbookTools } from "./tools/skills.js";
@@ -37,6 +38,7 @@ async function main() {
     xSearchTool, xPostTool, imagegenTool, visionTool,
     taskBoardTool(),                       // run-scoped task board (Avrone)
     teamAskTool(() => tools),              // delegate to a named teammate
+    ...dialogueTools(),                    // team.say / team.inbox / team.knowledge
     spawnTool(() => tools),                // depth-limited subagent spawn
     avroneTool,                            // the concluding system bridge: delegate to AVRONE's squad
     ...skillTools(),                       // recorded browser skills → tools

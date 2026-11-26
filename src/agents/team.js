@@ -5,6 +5,7 @@
 import Database from "better-sqlite3";
 import { dataPath } from "../paths.js";
 import { runAgent } from "./runtime.js";
+import { post } from "./dialogue.js";
 import { listBots, upsertBot, getAgent, toAgent } from "./registry.js";
 export { toAgent };
 
@@ -72,9 +73,12 @@ export function teamAskTool(getTools) {
       const b = getAgent(bot);
       if (!b) return { error: `no teammate named ${bot}` };
       sendMail(ctx?.agent || "caller", b.id, String(task ?? ""));
+      const runId = ctx?.run?.runId || "";
+      try { post({ from: ctx?.agent || "caller", to: b.id, kind: "ask", text: task, runId }); } catch {}
       const answer = await runAgent(b, String(task ?? ""), getTools(), {
-        runId: ctx?.run?.runId, agentName: b.id, spawnDepth: depth + 1
+        runId, agentName: b.id, spawnDepth: depth + 1
       });
+      try { post({ from: b.id, to: ctx?.agent || "caller", kind: "answer", text: typeof answer === "string" ? answer : JSON.stringify(answer), runId }); } catch {}
       return { delegated: true, teammate: b.id, answer };
     }
   };

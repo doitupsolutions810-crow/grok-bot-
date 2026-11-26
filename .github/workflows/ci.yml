@@ -60,6 +60,23 @@ jobs:
       - name: Live agent tests (real inference, docker exec, browser)
         run: docker compose exec -T grok-bot node tests/live.test.js
 
+      - name: Team council (real agents talk, use their tools, record eurekas)
+        timeout-minutes: 20
+        run: |
+          curl -fsS -X POST http://localhost:3000/api/agents -H 'content-type: application/json' \
+            -d '{"name":"Edge Critic","job":"edge case review","instructions":"You review test plans and point out the edge cases nobody tested. Speak plainly and politely."}' >/dev/null || true
+          curl -fsS --max-time 1100 -X POST http://localhost:3000/api/council -H 'content-type: application/json' \
+            -d '{"topic":"Continue even longer, more robust testing against even more edge cases, and fix along the way. Which edge case in this system should we test next, and why?","agents":["grok-main","edge-critic"],"rounds":2}' \
+            -o council.json
+          node -e '
+            const c = require("./council.json"); const fs = require("fs");
+            const md = ["## Team council", "", ...c.dialogue.map(m => `**${m.from}**${m.to !== "*" ? " → " + m.to : ""}: ${m.text.replace(/\n+/g, " ")}`), "", "## Eurekas", ...c.eurekas.map(e => `- ${e.text} (${e.agent})`)];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n\n") + "\n");
+            // annotations are readable through the API without downloading logs
+            for (const m of c.dialogue.slice(0, 8)) console.log(`::notice title=council ${m.from}::${m.text.replace(/\s+/g, " ").replace(/%/g, "%25").slice(0, 600)}`);
+            for (const e of c.eurekas.slice(0, 2)) console.log(`::notice title=eureka ${e.agent}::${e.text.replace(/\s+/g, " ").replace(/%/g, "%25").slice(0, 400)}`);
+          '
+
       - name: Agents' evolution loop (writes EVOLVE.md from the live runs)
         run: docker compose exec -T grok-bot node scripts/evolve.js
 

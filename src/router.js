@@ -14,6 +14,8 @@ import { issueToken, authRequired } from "./middleware/auth.js";
 import { agentsCrud } from "./middleware/agents-crud.js";
 import { pending, decide, takeHeld, approvalStatus, needsReview } from "./middleware/approvals.js";
 import { resumeHeld } from "./agents/runtime.js";
+import { getAgent } from "./agents/registry.js";
+import { post as postDialogue, feed as dialogueFeed, knowledge as teamKnowledge, council, KINDS } from "./agents/dialogue.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
   sseStart, sseNote, sseDone
@@ -252,6 +254,24 @@ export function makeRouter({ tools, docker }) {
   });
   r.delete("/tasks/:id", (req, res) => !/^\d+$/.test(req.params.id) ? res.status(400).json({ error: "bad task id" }) : res.status(deleteTask(+req.params.id) ? 200 : 404).json({ ok: true }));
   // Teach-a-task: record a browser workflow → it becomes the skill.<name> tool immediately
+  // ---------- team dialogue: what the agents say to each other, and what they discovered ----------
+  r.get("/dialogue", (req, res) => res.json(dialogueFeed({ runId: req.query.run, limit: req.query.limit, kind: req.query.kind })));
+  r.get("/knowledge", (req, res) => res.json(teamKnowledge({ q: req.query.q, limit: req.query.limit })));
+  r.post("/dialogue", (req, res) => {          // a human drops a message into the team channel
+    const { text, to = "*", runId = "" } = req.body || {};
+    if (typeof text !== "string" || !text.trim()) return res.status(400).json({ error: "text required" });
+    if (typeof to !== "string") return res.status(400).json({ error: "to must be a string" });
+    res.status(201).json({ id: postDialogue({ from: "human", to, kind: "human", text, runId }) });
+  });
+  r.post("/council", async (req, res) => {     // a real round-table between named agents
+    const { topic, agents: names, rounds } = req.body || {};
+    if (typeof topic !== "string" || !topic.trim()) return res.status(400).json({ error: "topic required" });
+    if (!Array.isArray(names) || names.length < 2 || names.some(n => typeof n !== "string")) return res.status(400).json({ error: "agents must list at least 2 agent ids" });
+    const unknown = names.filter(n => !getAgent(n));
+    if (unknown.length) return res.status(404).json({ error: `unknown agents: ${unknown.join(", ")}` });
+    try { res.json(await council({ topic, agents: names, rounds, runAgent, tools: tools || [], getAgent })); }
+    catch (e) { res.status(502).json({ error: e.message }); }
+  });
   r.get("/tools", (_req, res) => res.json((tools || []).map(t => ({ name: t.name, description: t.description || "", review: needsReview(t.name, {}) }))));
   r.get("/skills", (_req, res) => res.json({ recorded: listSkills().map(s => ({ name: s.name, description: s.description, steps: s.steps.length })), playbooks: loadPlaybooks().map(p => ({ name: p.name, description: p.description })) }));
   r.post("/skills", async (req, res) => {

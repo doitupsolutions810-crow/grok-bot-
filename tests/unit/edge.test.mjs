@@ -21,9 +21,11 @@ delete process.env.MODELS_REQUIRED;
 const seen = [];
 const failModels = new Set();
 let replyQueue = [];
+const lastBodies = [];   // every request body the stub LLM received
 const llm = http.createServer((req, res) => {
   let b = ""; req.on("data", c => (b += c)); req.on("end", () => {
     const body = JSON.parse(b || "{}");
+    lastBodies.push(body); if (lastBodies.length > 50) lastBodies.shift();
     seen.push(body);
     if (failModels.has(body.model)) { res.writeHead(500); return res.end('{"error":"boom"}'); }
     const message = replyQueue.shift() || { role: "assistant", content: `ok from ${body.model}` };
@@ -796,4 +798,65 @@ test("boot: untagged model names match Ollama's tagged listing (CI boot restart-
   assert.ok(hasModel(tags, "registry.local:5000/team/llama:latest"));   // port colon ≠ tag
   assert.ok(!hasModel({}, "x")); assert.ok(!hasModel(tags, ""));
   assert.equal(normModel("llava"), "llava:latest");
+});
+
+// ================= round 10: team dialogue, inbox queues, knowledge board, council =================
+test("dialogue: queued inbox per agent, broadcasts, cursor, eureka → knowledge (deduped)", async () => {
+  const d = await import("../../src/agents/dialogue.js");
+  d.post({ from: "Planner", to: "coder", kind: "ask", text: "Can you check the boot logs?" });
+  d.post({ from: "planner", to: "*", text: "Status: round ten started.\nEUREKA: Ollama lists models with a :latest tag." });
+  d.post({ from: "coder", to: "*", kind: "eureka", text: "Ollama lists models with a :latest tag." });   // duplicate insight
+  const box = d.inbox("coder");
+  assert.deepEqual(box.map(m => m.kind), ["ask", "note"]);
+  assert.equal(d.inbox("coder").length, 0);                     // cursor advanced: queue drained
+  assert.equal(d.inbox("planner").filter(m => m.from === "planner").length, 0);   // own broadcasts excluded
+  assert.equal(d.knowledge({ q: ":latest" }).length, 1);
+  assert.equal(d.knowledge({ q: "100%_" }).length, 0);           // LIKE wildcards escaped
+  assert.throws(() => d.post({ from: "x", text: "   " }), /text required/);
+  assert.throws(() => d.post({ from: "x", text: "hi", kind: "shout" }), /kind must be/);
+  assert.match(d.teamContext(), /proper English[\s\S]*:latest tag/);
+});
+
+test("dialogue: every agent's system prompt carries the English style + team knowledge; team tools always granted", async () => {
+  replyQueue = [{ role: "assistant", content: "done" }];
+  const { runAgent } = await import("../../src/agents/runtime.js");
+  const tools = [{ name: "team.say", run: async () => ({}) }, { name: "terminal", run: async () => ({}) }];
+  // inspect what the stub LLM received
+  lastBodies.length = 0;
+  await runAgent({ id: "narrow", systemPrompt: "You are narrow.", tools: ["browser"] }, "hi", tools);
+  const body = lastBodies.at(-1);
+  assert.match(body.messages[0].content, /You are narrow\.[\s\S]*proper English/);
+  assert.deepEqual((body.tools || []).map(t => t.function.name), ["team.say"]);
+});
+
+test("team.ask records the ask and the answer in the dialogue", async () => {
+  const d = await import("../../src/agents/dialogue.js");
+  await call("POST", "/agents", { name: "Dialogue Helper", instructions: "Answer briefly." });
+  replyQueue = [{ role: "assistant", content: "Here is my answer." }];
+  const ask = mods.team.teamAskTool(() => []);
+  await ask.run({ bot: "dialogue-helper", task: "Summarize the logs." }, { agent: "lead", run: { runId: "ask-run" } });
+  const f = d.feed({ runId: "ask-run" });
+  assert.deepEqual(f.map(m => [m.from, m.to, m.kind]), [["lead", "dialogue-helper", "ask"], ["dialogue-helper", "lead", "answer"]]);
+});
+
+test("council: validates input, agents take turns reading the thread, eurekas land on the board", async () => {
+  const api = await full();
+  assert.equal((await api("POST", "/council", { agents: ["grok-main", "x"] })).status, 400);
+  assert.equal((await api("POST", "/council", { topic: "t", agents: ["grok-main"] })).status, 400);
+  assert.equal((await api("POST", "/council", { topic: "t", agents: ["grok-main", "nobody-here"] })).status, 404);
+  await call("POST", "/agents", { name: "Council Critic", instructions: "Challenge assumptions politely." });
+  replyQueue = [
+    { role: "assistant", content: "I propose we test empty inputs first." },
+    { role: "assistant", content: "I agree, and we should also test unicode names.\nEUREKA: Unicode agent names need slug fallbacks." },
+  ];
+  const r = await api("POST", "/council", { topic: "What should we test next?", agents: ["grok-main", "council-critic"], rounds: 1 });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.dialogue.map(m => m.from), ["human", "grok-main", "council-critic"]);
+  assert.ok(r.body.eurekas.some(e => /slug fallbacks/.test(e.text)));
+  const second = lastBodies.at(-1).messages[1].content;          // the critic saw the first turn
+  assert.match(second, /grok-main: I propose we test empty inputs first/);
+  const feed = await api("GET", `/dialogue?run=${r.body.runId}`);
+  assert.equal(feed.body.length, 3);
+  assert.equal((await api("POST", "/dialogue", { text: "" })).status, 400);
+  assert.equal((await api("POST", "/dialogue", { text: "Great work, team." })).status, 201);
 });

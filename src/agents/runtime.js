@@ -5,6 +5,7 @@
 // and returns { pendingApproval } — the approve route resumes it exactly once.
 
 import { chatRoute } from "../llm/router.js";
+import { teamContext } from "./dialogue.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
 import { emit } from "./codex.js";
 
@@ -45,6 +46,9 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
   return null;
 }
 
+const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load"]);
+function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
+
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;
   const ctx = opts.ctx || {
@@ -53,13 +57,15 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     spawnDepth: opts.spawnDepth ?? 0
   };
   const messages = resume || [
-    { role: "system", content: agent.systemPrompt || "You are a helpful AI teammate." },
+    // every agent gets the plain-English team style + the newest team discoveries
+    { role: "system", content: `${agent.systemPrompt || "You are a helpful AI teammate."}\n\n${safeTeamContext()}` },
     { role: "user", content: String(userMessage ?? "") }
   ];
   // tools: ["*"] grants the full live toolset
+  // the team channel and skill playbooks are every agent's birthright, whatever its whitelist
   const available = agent.tools?.includes("*")
     ? tools
-    : tools.filter(t => agent.tools?.includes(t.name) || agent.tools?.includes(t.name.split(".")[0]));
+    : tools.filter(t => ALWAYS.has(t.name) || agent.tools?.includes(t.name) || agent.tools?.includes(t.name.split(".")[0]));
 
   for (let step = 0; step < maxSteps; step++) {
     const reply = await chatRoute(messages, available, { mode: agent.mode || "chat", model: agent.model || "" });

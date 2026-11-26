@@ -1514,3 +1514,26 @@ test("GET /lattice/minds/:id shows an agent's journal and goals; bad ids are ref
   assert.equal((await fetch(u + "a%20b")).status, 400);
   assert.equal((await fetch(u + "x".repeat(81))).status, 400);
 });
+
+// ================= round 20: many agents proposing at once =================
+test("harness: concurrent proposals test one at a time, and a flood is refused instead of starving the box", async () => {
+  const root = await harnessFixture();
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(root, "tests", "slow.mjs"), "const fs=await import('node:fs');fs.appendFileSync(process.env.LOG,'S'+Date.now()+'\\n');await new Promise(r=>setTimeout(r,150));fs.appendFileSync(process.env.LOG,'E'+Date.now()+'\\n');");
+  const log = join(root, "lane.log"); process.env.LOG = log;
+  process.env.HARNESS_TEST_CMD = `${process.execPath} tests/slow.mjs`;
+  process.env.HARNESS_MAX_QUEUE = "3";
+  const h = await import("../../src/agents/harness.js");
+  const mk = i => h.propose({ agent: `a${i}`, title: `p${i}`, files: [{ path: `docs/n${i}.md`, content: String(i) }] });
+  const settled = await Promise.allSettled([0, 1, 2, 3, 4].map(mk));
+  const ok = settled.filter(s => s.status === "fulfilled"), refused = settled.filter(s => s.status === "rejected");
+  assert.equal(ok.length, 3); assert.equal(refused.length, 2);
+  assert.match(refused[0].reason.message, /test lane is busy/);
+  assert.ok(ok.every(s => s.value.status === "passed"));
+  const lines = (await import("node:fs")).readFileSync(log, "utf8").trim().split("\n");
+  assert.deepEqual(lines.map(l => l[0]).join(""), "SESESE", "never two suites at once");
+  assert.equal(h.queueDepth(), 0, "the lane drains");
+  const after = await mk(9);                          // and accepts work again once drained
+  assert.equal(after.status, "passed");
+  delete process.env.HARNESS_MAX_QUEUE; delete process.env.LOG; delete process.env.HARNESS_ROOT; delete process.env.HARNESS_TEST_CMD;
+});

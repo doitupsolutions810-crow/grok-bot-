@@ -130,6 +130,19 @@ export function applyProposal(p, by = "owner") {
   return p;
 }
 
+// One full-suite run at a time: four agents proposing at once on a CPU box would starve the
+// model they think with. Extra proposals wait their turn; past HARNESS_MAX_QUEUE they're refused.
+let lane = Promise.resolve(), waiting = 0;
+function queued(fn) {
+  const max = Number(process.env.HARNESS_MAX_QUEUE) || 5;
+  if (waiting >= max) return Promise.reject(new Error(`the test lane is busy (${waiting} proposals waiting); try again later`));
+  waiting++;
+  const run = lane.then(fn, fn);
+  lane = run.catch(() => {}).finally(() => { waiting--; });
+  return run;
+}
+export const queueDepth = () => waiting;
+
 export async function propose({ agent = "agent", title, rationale = "", files, basedOn } = {}) {
   if (typeof title !== "string" || !title.trim()) throw new Error("title required");
   if (!Array.isArray(files) || !files.length) throw new Error("files required: [{path, content}]");
@@ -141,13 +154,16 @@ export async function propose({ agent = "agent", title, rationale = "", files, b
   });
   if (new Set(clean.map(f => f.path)).size !== clean.length) throw new Error("the same path appears twice");
   if (basedOn !== undefined && !readProposal(basedOn)) throw new Error(`unknown basedOn proposal ${basedOn}`);
+  if (waiting >= (Number(process.env.HARNESS_MAX_QUEUE) || 5)) throw new Error(`the test lane is busy (${waiting} proposals waiting); try again later`);
   const p = {
     id: `p-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, agent: String(agent), title: title.trim().slice(0, 200),
     rationale: String(rationale).slice(0, 4000), basedOn: basedOn || null, files: clean, status: "testing", createdAt: new Date().toISOString()
   };
   saveProposal(p);
   lattice.record("say", { agent: p.agent, to: "*", text: `I proposed a harness change: ${p.title} (${clean.map(f => f.path).join(", ")})` });
-  const result = await testProposal(p);
+  let result;
+  try { result = await queued(() => testProposal(p)); }
+  catch (e) { result = { ok: false, stage: "lane", output: e.message }; }       // never leave a proposal stuck in "testing"
   Object.assign(p, { status: result.ok ? "passed" : "failed", test: result, testedAt: new Date().toISOString() });
   saveProposal(p);
   lattice.record(result.ok ? "eureka" : "error", { agent: p.agent,

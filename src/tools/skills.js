@@ -15,12 +15,32 @@ db.exec(`CREATE TABLE IF NOT EXISTS skills (
 const SKILLS_DIR = process.env.SKILLS_DIR || "/app/skills";
 
 // steps: [{action:"goto"|"click"|"type"|"wait", selector?, text?, url?, ms?}]
+export function validateSkill(name, description, steps) {
+  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(name)) return "name must be 1-48 chars of a-z 0-9 _ -";
+  if (description != null && typeof description !== "string") return "description must be a string";
+  if (!Array.isArray(steps) || !steps.length || steps.length > 50) return "steps must be an array of 1-50 steps";
+  for (const [i, st] of steps.entries()) {
+    if (!st || typeof st !== "object") return `step ${i}: must be an object`;
+    if (st.action === "goto") { if (!/^https?:\/\//i.test(String(st.url || ""))) return `step ${i}: goto needs an http(s) url`; }
+    else if (st.action === "click") { if (typeof st.selector !== "string" || !st.selector) return `step ${i}: click needs a selector`; }
+    else if (st.action === "type") { if (typeof st.selector !== "string" || !st.selector || typeof st.text !== "string") return `step ${i}: type needs selector and text`; }
+    else if (st.action === "wait") { if (st.ms != null && !(Number(st.ms) >= 0 && Number(st.ms) <= 60_000)) return `step ${i}: wait ms must be 0..60000`; }
+    else return `step ${i}: unknown action ${JSON.stringify(st.action)}`;
+  }
+  return null;
+}
 export async function saveSkill(name, description, steps) {
+  const bad = validateSkill(name, description, steps);
+  if (bad) throw new Error(bad);
   db.prepare("INSERT OR REPLACE INTO skills (name, description, steps, created) VALUES (?,?,?,datetime('now'))")
-    .run(name, description, JSON.stringify(steps));
+    .run(name, String(description || ""), JSON.stringify(steps));
 }
 export function listSkills() {
-  return db.prepare("SELECT name, description, steps FROM skills").all().map(s => ({ ...s, steps: JSON.parse(s.steps) }));
+  // one corrupt row used to throw and take every skill (and boot) down with it
+  return db.prepare("SELECT name, description, steps FROM skills").all().flatMap(s => {
+    try { const steps = JSON.parse(s.steps); return Array.isArray(steps) ? [{ ...s, steps }] : []; }
+    catch { console.warn(`[skills] skipping corrupt skill ${s.name}`); return []; }
+  });
 }
 
 // Shipped SKILL.md playbooks (frontmatter: name, description)
@@ -29,16 +49,18 @@ export function loadPlaybooks() {
     return readdirSync(SKILLS_DIR, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => {
-        try { return readFileSync(`${SKILLS_DIR}/${d.name}/SKILL.md`, "utf-8"); } catch { return null; }
+        try { return { d, src: readFileSync(`${SKILLS_DIR}/${d.name}/SKILL.md`, "utf-8") }; } catch { return null; }
       })
       .filter(Boolean)
-      .map(src => {
-        const fm = (src.match(/^---\n([\s\S]*?)\n---/) || [])[1] || "";
+      .map(({ d, src }) => {
+        // CRLF files and quoted values ("name: \"x\"") used to all collapse to name "playbook"
+        src = src.replace(/^\uFEFF/, "");
+        const fm = (src.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || "";
         const meta = Object.fromEntries(
-          fm.split("\n").filter(l => l.includes(":"))
-            .map(l => [l.slice(0, l.indexOf(":")).trim(), l.slice(l.indexOf(":") + 1).trim()])
+          fm.split(/\r?\n/).filter(l => l.includes(":"))
+            .map(l => [l.slice(0, l.indexOf(":")).trim(), l.slice(l.indexOf(":") + 1).trim().replace(/^(["'])(.*)\1$/, "$2")])
         );
-        return { name: meta.name || "playbook", description: meta.description || "", content: src };
+        return { name: meta.name || d.name, description: meta.description || "", content: src };
       });
   } catch { return []; }
 }
@@ -54,7 +76,10 @@ async function withSharedBrowser(fn) {
 
 // Every saved skill becomes a first-class tool: skill.<name>
 export function skillTools() {
-  return listSkills().map(s => ({
+  return listSkills().map(skillTool);
+}
+export function skillTool(s) {
+  return ({
     name: `skill.${s.name}`,
     description: s.description,
     parameters: { type: "object", properties: {} },
@@ -69,7 +94,7 @@ export function skillTools() {
         return { ok: true, url: page.url(), content: (await page.content()).slice(0, 4000) };
       });
     }
-  }));
+  });
 }
 
 // Meta tools: discover and load playbooks
@@ -90,8 +115,10 @@ export function playbookTools() {
     name: "skill.load",
     description: "Load a written playbook by name and get its full instructions.",
     parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-    async run({ name }) {
-      const p = loadPlaybooks().find(p => p.name === name);
+    async run({ name } = {}) {
+      if (typeof name !== "string" || !name.trim()) return { error: "name required" };
+      const want = name.trim().toLowerCase();
+      const p = loadPlaybooks().find(p => p.name.toLowerCase() === want);
       if (!p) return { error: `no playbook named ${name}` };
       return p;
     }

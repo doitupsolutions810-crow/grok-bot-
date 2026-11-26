@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { saveSkill, listSkills, loadPlaybooks, validateSkill, skillTool } from "./tools/skills.js";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import {
@@ -250,6 +251,21 @@ export function makeRouter({ tools, docker }) {
     res.json({ ok: true });
   });
   r.delete("/tasks/:id", (req, res) => !/^\d+$/.test(req.params.id) ? res.status(400).json({ error: "bad task id" }) : res.status(deleteTask(+req.params.id) ? 200 : 404).json({ ok: true }));
+  // Teach-a-task: record a browser workflow → it becomes the skill.<name> tool immediately
+  r.get("/tools", (_req, res) => res.json((tools || []).map(t => ({ name: t.name, description: t.description || "", review: needsReview(t.name, {}) }))));
+  r.get("/skills", (_req, res) => res.json({ recorded: listSkills().map(s => ({ name: s.name, description: s.description, steps: s.steps.length })), playbooks: loadPlaybooks().map(p => ({ name: p.name, description: p.description })) }));
+  r.post("/skills", async (req, res) => {
+    const { name, description, steps } = req.body || {};
+    const bad = validateSkill(name, description, steps);
+    if (bad) return res.status(400).json({ error: bad });
+    await saveSkill(name, description, steps);
+    if (Array.isArray(tools)) {
+      const t = skillTool({ name, description: String(description || ""), steps });
+      const i = tools.findIndex(x => x.name === t.name);
+      if (i >= 0) tools[i] = t; else tools.push(t);
+    }
+    res.status(201).json({ ok: true, tool: `skill.${name}` });
+  });
   r.get("/images/:file", (req, res) => {
     const file = String(req.params.file);
     if (!/^[\w.-]+\.png$/.test(file) || file.includes("..")) return res.status(400).json({ error: "bad file name" });

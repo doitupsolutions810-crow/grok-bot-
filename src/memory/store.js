@@ -25,7 +25,7 @@ export async function remember(session, role, content) {
   if (count % 20 === 0) {
     const prior = db.prepare("SELECT summary FROM summaries WHERE session=?").get(session)?.summary || "";
     const recent = db.prepare("SELECT role, content FROM messages WHERE session=? ORDER BY id DESC LIMIT 20").all(session)
-      .map(m => `${m.role}: ${m.content}`).join("\n");
+      .reverse().map(m => `${m.role}: ${m.content}`).join("\n");
     let r;
     try { r = await llm.chat([
       { role: "system", content: "Merge the previous long-term summary with the recent messages into one compact long-term memory of durable facts, preferences, and decisions. Output only the summary." },
@@ -40,7 +40,8 @@ export async function remember(session, role, content) {
 export function recall(session) {
   session = String(session ?? "default").slice(0, 200) || "default";
   const s = db.prepare("SELECT summary FROM summaries WHERE session=?").get(session);
-  const recent = db.prepare("SELECT role, content FROM messages WHERE session=? ORDER BY id DESC LIMIT 8").all(session);
+  // newest 8, but returned oldest-first: the prompt used to show the conversation backwards
+  const recent = db.prepare("SELECT role, content FROM messages WHERE session=? ORDER BY id DESC LIMIT 8").all(session).reverse();
   return { longTerm: s?.summary || "", recent };
 }
 

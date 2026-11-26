@@ -4,7 +4,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, cpSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, cpSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
@@ -740,4 +740,47 @@ test("voice: bad voice names / empty text / empty audio fail cleanly", async () 
   const api = await full();
   assert.equal((await api("POST", "/voice/stt", { audioBase64: "====" })).status, 400);
   assert.equal((await api("POST", "/voice/stt", { audioBase64: "UklGRg==" })).status, 503);   // no backend here
+});
+
+// ================= round 8: memory order, terminal input, skills (teach-a-task + playbooks) =================
+test("memory: recent context is chronological (it used to be fed to the model backwards)", async () => {
+  const mem = await import("../../src/memory/store.js");
+  for (const m of ["first", "second", "third"]) await mem.remember("order-chk", "user", m);
+  assert.deepEqual(mem.recall("order-chk").recent.map(r => r.content), ["first", "second", "third"]);
+  assert.match(mem.memoryContext("order-chk"), /first[\s\S]*second[\s\S]*third/);
+});
+
+test("terminal: missing/blank/huge command rejected (never runs 'undefined')", async () => {
+  const { terminalTool } = await import("../../src/tools/terminal.js");
+  assert.equal((await terminalTool.run({})).error, "command required");
+  assert.equal((await terminalTool.run({ command: "  " })).error, "command required");
+  assert.match((await terminalTool.run({ command: "x".repeat(20_001) })).error, /too long/);
+});
+
+test("skills: POST /skills validates, saves, and the skill.<name> tool exists immediately", async () => {
+  const api = await full();
+  assert.equal((await api("POST", "/skills", { name: "Bad Name", steps: [{ action: "wait" }] })).status, 400);
+  assert.equal((await api("POST", "/skills", { name: "x", steps: [] })).status, 400);
+  assert.equal((await api("POST", "/skills", { name: "x", steps: [{ action: "goto", url: "file:///etc/passwd" }] })).status, 400);
+  assert.equal((await api("POST", "/skills", { name: "x", steps: [{ action: "rm" }] })).status, 400);
+  const ok = await api("POST", "/skills", { name: "check-status", description: "open status page", steps: [{ action: "goto", url: "https://status.example" }, { action: "wait", ms: 10 }] });
+  assert.equal(ok.status, 201); assert.equal(ok.body.tool, "skill.check-status");
+  const list = await api("GET", "/skills");
+  assert.ok(list.body.recorded.some(s => s.name === "check-status" && s.steps === 2));
+  const tools = await api("GET", "/tools");
+  assert.ok(JSON.stringify(tools.body).includes("skill.check-status"));
+});
+
+test("skills: CRLF / BOM / quoted SKILL.md frontmatter parses; no-frontmatter falls back to folder name", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "skills-"));
+  mkdirSync(join(dir, "win")); writeFileSync(join(dir, "win", "SKILL.md"), "\uFEFF---\r\nname: \"win-skill\"\r\ndescription: 'from windows'\r\n---\r\nbody");
+  mkdirSync(join(dir, "bare")); writeFileSync(join(dir, "bare", "SKILL.md"), "just text");
+  const prev = process.env.SKILLS_DIR; process.env.SKILLS_DIR = dir;
+  const mod = await import(`../../src/tools/skills.js?d=${Date.now()}`);
+  const names = mod.loadPlaybooks().map(p => p.name).sort();
+  assert.deepEqual(names, ["bare", "win-skill"]);
+  const load = mod.playbookTools()[1];
+  assert.equal((await load.run({ name: "WIN-SKILL" })).description, "from windows");
+  assert.match((await load.run({})).error, /name required/);
+  process.env.SKILLS_DIR = prev;
 });

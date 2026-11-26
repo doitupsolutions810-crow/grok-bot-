@@ -14,19 +14,24 @@ export const terminalTool = {
     },
     required: ["command"]
   },
-  async run({ command }, ctx) {
+  async run({ command } = {}, ctx) {
+    // "undefined" used to be executed as a shell command
+    if (typeof command !== "string" || !command.trim()) return { ok: false, error: "command required" };
+    if (command.length > 20_000) return { ok: false, error: "command too long (max 20000 chars)" };
     const container = (process.env.ALLOWED_TERMINAL_CONTAINERS || "grok-sandbox").split(",")[0].trim();
     const slug = String(ctx?.agent || "main").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32) || "main";
     const home = `/workspace/agents/${slug}`;
     const wrapped = `mkdir -p ${home} && cd ${home} && ${command}`;
     return await new Promise(resolve => {
       execFile("docker", ["exec", container, "sh", "-lc", wrapped], {
-        timeout: 30_000, maxBuffer: 1024 * 1024
+        timeout: Math.min(Math.max(1000, Number(process.env.TERMINAL_TIMEOUT_MS) || 30_000), 600_000),
+        maxBuffer: 1024 * 1024, killSignal: "SIGKILL"
       }, (err, stdout, stderr) => {
         resolve({
           ok: !err,
           cwd: home,
-          stdout: stdout.slice(0, 8000),
+          timedOut: !!err?.killed,
+          stdout: String(stdout || "").slice(0, 8000),
           stderr: (stderr || err?.message || "").slice(0, 4000)
         });
       });

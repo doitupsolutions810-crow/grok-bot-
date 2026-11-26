@@ -1750,3 +1750,26 @@ test("research env: pause then resume mid-step neither orphans the env nor runs 
   assert.equal(R.get(e.env.id).step, 6);
   R._reset();
 });
+
+// ================= round 24: outside MCP callers can't flood the team =================
+test("MCP server: agent_ask caps concurrent runs, frees the slot on success and on a throw", async () => {
+  const { callTool, _running } = await import("../../src/mcp-server.js");
+  process.env.MCP_MAX_CONCURRENT = "2";
+  const gates = [];
+  const deps = { getAgent: id => ({ id }), tools: [], runAgent: (_a, task) => task === "boom" ? Promise.reject(new Error("model down")) : new Promise(r => gates.push(r)) };
+  const a = callTool("agent_ask", { agent: "grok-main", task: "one" }, deps);
+  const b = callTool("agent_ask", { agent: "grok-main", task: "two" }, deps);
+  await new Promise(r => setTimeout(r, 5));
+  assert.equal(_running(), 2);
+  const c = await callTool("agent_ask", { agent: "grok-main", task: "three" }, deps);
+  assert.equal(c.isError, true); assert.match(c.content[0].text, /busy: 2 agent runs/);
+  gates.forEach(g => g("fine"));
+  assert.equal((await a).content[0].text, "fine"); await b;
+  assert.equal(_running(), 0, "slots freed after success");
+  const d = await callTool("agent_ask", { agent: "grok-main", task: "boom" }, deps);
+  assert.match(d.content[0].text, /agent failed: model down/);
+  assert.equal(_running(), 0, "slot freed after a throw");
+  assert.match((await callTool("agent_ask", { agent: "grok-main", task: "x".repeat(8001) }, deps)).content[0].text, /too long/);
+  assert.equal(_running(), 0, "a refused task never takes a slot");
+  delete process.env.MCP_MAX_CONCURRENT;
+});

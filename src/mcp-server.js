@@ -23,6 +23,8 @@ export const TOOLS = [
   { name: "knowledge_search", description: "Search the team's recorded discoveries.", inputSchema: obj({ q: { type: "string" } }) }
 ];
 
+let running = 0;
+export const _running = () => running;
 const ok = v => ({ content: [{ type: "text", text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
 const fail = msg => ({ isError: true, content: [{ type: "text", text: msg }] });
 
@@ -35,8 +37,13 @@ export async function callTool(name, args = {}, { getAgent, listAgents, runAgent
       if (args.task.length > 8000) return fail("task is too long (8000 characters max)");
       const agent = getAgent?.(args.agent);
       if (!agent) return fail(`unknown agent: ${args.agent}`);
+      // outside callers share the box with the team: cap concurrent agent runs from MCP
+      const cap = Math.max(1, Number(process.env.MCP_MAX_CONCURRENT) || 2);
+      if (running >= cap) return fail(`busy: ${running} agent runs from MCP are already in progress (MCP_MAX_CONCURRENT=${cap}); try again shortly`);
+      running++;
       try { return ok(String(await runAgent(agent, args.task, tools, { runId: `mcp-${Date.now().toString(36)}`, agentName: args.agent }) ?? "")); }
       catch (e) { return fail(`agent failed: ${e.message}`); }
+      finally { running--; }
     }
     case "research_start": { const r = research.create(args, { getAgent }); return r.error ? fail(r.error) : ok(r.env); }
     case "research_status": {

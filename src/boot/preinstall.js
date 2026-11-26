@@ -19,7 +19,7 @@ const MODEL_PULL_TIMEOUT_MS = 15 * 60_000;
 export async function preinstall(docker, { log = console.log } = {}) {
   // 1. Pull required images — SKIP any image already present locally, so a
   //    flaky registry round-trip can never block a boot that has what it needs.
-  for (const image of REQUIRED_IMAGES) {
+  if (docker) for (const image of REQUIRED_IMAGES) {
     await pullImage(docker, image, log);
   }
 
@@ -33,8 +33,8 @@ export async function preinstall(docker, { log = console.log } = {}) {
   //    needs its Chromium up before the browser self-test runs, or the boot
   //    would race a cold container.
   await waitForHttp(`${ollama}/api/tags`, log, "ollama");
-  await waitForHttp(browserProbe(), log, "browser");
-  await waitForHttp(process.env.COMFYUI_URL || "http://comfyui:8188", log, "comfyui", { optional: true });
+  await waitForHttp(browserProbe(), log, "browser", docker ? {} : { optional: true, timeout: 6_000 });
+  await waitForHttp(process.env.COMFYUI_URL || "http://comfyui:8188", log, "comfyui", { optional: true, ...(docker ? {} : { timeout: 4_000 }) });
   return true;
 }
 

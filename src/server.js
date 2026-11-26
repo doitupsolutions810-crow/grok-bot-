@@ -1,5 +1,6 @@
 import express from "express";
 import { bootDocker } from "./boot/docker.js";
+import { jsonErrors } from "./middleware/json-errors.js";
 import { preinstall } from "./boot/preinstall.js";
 import { selftest } from "./boot/selftest.js";
 import { makeRouter } from "./router.js";
@@ -94,6 +95,7 @@ async function main() {
     ready: test.ok, degraded: !test.ok, tools: tools.map(t => t.name), selftest: test.results
   }));
   app.use(express.static("public"));       // web console (public/index.html)
+  app.use(jsonErrors());                   // JSON errors, never an HTML stack trace with file paths
 
   // 9. The Lattice: restore the agents' thought/communication log, start autonomous growth if enabled
   console.log(`[boot] lattice restored ${lattice.load()} events`);

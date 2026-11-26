@@ -23,7 +23,18 @@ export async function bootDocker({ log = console.log } = {}) {
 
   // 1. Verify the daemon is reachable — a cold socket-proxy gets a grace
   //    window instead of a one-shot connection error that kills the boot.
-  const info = await connectDaemon(docker, log);
+  // DOCKER_OPTIONAL=true: a host with Ollama but no Docker (a laptop, a sandbox) still boots.
+  // Container features (terminal sandbox, agent nodes, plugins) report themselves down
+  // instead of the whole server refusing to start.
+  const optional = process.env.DOCKER_OPTIONAL === "true";
+  let info;
+  try { info = await connectDaemon(docker, log, optional ? { timeout: 4_000 } : undefined); }
+  catch (e) {
+    if (!optional) throw e;
+    log(`[boot] no Docker daemon (${e.message.slice(0, 120)}); DOCKER_OPTIONAL=true, continuing without containers`);
+    await ensureModel(process.env.LLM_MODEL || "llama3.1:8b", log);
+    return null;
+  }
   log(`[boot] Docker connected: ${info.Name}, ${info.Containers} containers, v${info.ServerVersion}`);
 
   // 2. Ensure the LLM backend is up and the model exists

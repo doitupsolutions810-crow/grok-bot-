@@ -1820,3 +1820,24 @@ test("research env: shell-capable agents are refused on create and at step time 
   assert.ok(JSON.stringify(R.get(env.id).log).includes("shell-capable"), "refusal is logged on the env");
   R.control(env.id, "stop"); R._reset();
 });
+
+// ================= round 27: found running live on local Ollama =================
+test("API errors are JSON: a throwing route and a malformed body never leak an HTML stack trace or file paths", async () => {
+  const { jsonErrors } = await import("../../src/middleware/json-errors.js");
+  const app = express(); app.use(express.json({ limit: "1kb" }));
+  app.post("/boom", () => { throw new Error("ENOENT: no such file or directory, open '/app/config/agents.json.tmp-1'"); });
+  app.post("/ok", (req, res) => res.json({ got: req.body }));
+  const logs = []; app.use(jsonErrors({ log: m => logs.push(m) }));
+  const s = app.listen(0); s.unref(); const base = `http://127.0.0.1:${s.address().port}`;
+  const send = (p, body) => fetch(base + p, { method: "POST", headers: { "content-type": "application/json" }, body });
+  for (const [p, body, status, error] of [["/boom", "{}", 500, "internal error"], ["/ok", "{not json", 400, "malformed JSON body"], ["/ok", JSON.stringify({ x: "y".repeat(5000) }), 413, "request body too large"]]) {
+    const r = await send(p, body); const t = await r.text();
+    assert.equal(r.status, status, p);
+    assert.match(r.headers.get("content-type"), /json/);
+    assert.deepEqual(JSON.parse(t), { error });
+    assert.ok(!/\/app\/|<html|at \w+ \(/i.test(t), "no paths or stack in the response");
+  }
+  assert.equal((await (await send("/ok", '{"a":1}')).json()).got.a, 1);
+  assert.ok(logs.some(l => l.includes("agents.json.tmp")), "the detail goes to the server log");
+  s.close();
+});

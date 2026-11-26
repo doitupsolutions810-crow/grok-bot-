@@ -1231,3 +1231,153 @@ test("council survives members that throw, return objects, return nothing, or ha
   const many = await d.council({ topic: "cap", agents: ["c", "c"].concat(["a", "b"]), rounds: 99, runAgent: async () => "ok", tools: [], getAgent: id => agents[id] });
   assert.equal(many.dialogue.filter(m => m.from !== "human").length, 3 * 4, "rounds cap at 4");
 });
+
+// ================= round 17: research tools (search bar, scraping, GitHub) and the outbound guard =================
+test("netguard: agents can't reach internal services, LAN, metadata, or sneak there by redirect", async () => {
+  const g = await import("../../src/tools/netguard.js");
+  delete process.env.WEB_ALLOW_PRIVATE;
+  for (const u of ["http://127.0.0.1:11434/api/tags", "http://169.254.169.254/latest/meta-data/", "http://localhost:3000", "http://ollama:11434",
+    "http://browser:3000/json/version", "http://[::1]/", "http://[::ffff:127.0.0.1]/", "http://0x7f000001/", "http://2130706433/", "http://10.1.2.3/",
+    "http://192.168.0.1/", "http://172.20.0.5/", "http://100.64.0.1/", "http://0.0.0.0/", "http://[fd00::1]/", "http://[fe80::1]/", "http://x.internal/",
+    "file:///etc/passwd", "gopher://x.com/", "http://user:pw@example.com/"])
+    await assert.rejects(g.assertPublicUrl(u), /private|protocol|credentials|resolve/, u);
+  assert.equal(g.isPrivateIp("93.184.216.34"), false);
+  assert.equal(g.isPrivateIp("::ffff:7f00:1"), true);
+  assert.equal(g.isPrivateIp("not-an-ip"), true);
+  // a public page that redirects into the metadata service is stopped at the hop
+  const realFetch = globalThis.fetch; const hits = [];
+  globalThis.fetch = async (url) => { hits.push(String(url)); return new Response("", { status: 302, headers: { location: "http://169.254.169.254/latest/" } }); };
+  try { await assert.rejects(g.guardedFetch("http://93.184.216.34/"), /private/); } finally { globalThis.fetch = realFetch; }
+  assert.deepEqual(hits, ["http://93.184.216.34/"], "the private hop was never fetched");
+  globalThis.fetch = async () => new Response("", { status: 301, headers: { location: "/again" } });
+  try { await assert.rejects(g.guardedFetch("http://93.184.216.34/"), /too many redirects/); } finally { globalThis.fetch = realFetch; }
+  const { webFetchTool } = await import("../../src/tools/web.js");
+  assert.match((await webFetchTool.run({ url: "http://127.0.0.1:1/" })).error, /private/);
+});
+
+async function stub(handler) {
+  const http = await import("node:http");
+  const s = http.createServer(handler).listen(0); s.unref();
+  await new Promise(r => s.once("listening", r));
+  return `http://127.0.0.1:${s.address().port}`;
+}
+
+test("web.search parses results, unwraps redirect links, skips ads, and reports a blocked engine honestly", async () => {
+  process.env.WEB_ALLOW_PRIVATE = "true";
+  const r = await import("../../src/tools/research.js");
+  let mode = "ok";
+  const base = await stub((req, res) => {
+    const q = new URL(req.url, "http://x").searchParams.get("q");
+    if (mode === "bing" && req.url.startsWith("/bing")) { res.writeHead(200, { "content-type": "text/html" });
+      return res.end(`<li class="b_algo" data-x><h2><a href="https://www.bing.com/ck/a?!&amp;p=1&amp;u=a1${Buffer.from("https://www.ibm.com/think/topics/ai-agent-orchestration").toString("base64url")}&amp;ntb=1">IBM &amp; agents</a></h2><p>What <strong>it</strong> is</p></li>
+        <li class="b_algo"><h2><a href="https://plain.example/">Plain</a></h2></li><li class="b_algo"><h2><a href="https://www.bing.com/images">self</a></h2></li>`); }
+    if (mode === "bing") { res.writeHead(202, { "content-type": "text/html" }); return res.end("<html>anomaly</html>"); }
+    if (mode === "blocked") { res.writeHead(202, { "content-type": "text/html" }); return res.end("<html>anomaly detected</html>"); }
+    if (mode === "searx") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ results: [{ title: "S", url: "https://s.example/", content: q }] })); }
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(`<div class="result results_links"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1&amp;rut=x">Edge &amp; cases</a><a class="result__snippet" href="#">About <b>${q}</b></a></div>
+      <div class="result"><a class="result__a" href="https://duckduckgo.com/y.js?ad=1">Ad</a></div>
+      <div class="result"><a class="result__a" href="javascript:alert(1)">bad</a></div>
+      <div class="result"><a class="result__a" href="https://two.example/">Two</a><div class="result__snippet">second</div></div>`);
+  });
+  process.env.SEARCH_URL = base + "/html/";
+  const ok = await r.webSearchTool.run({ query: "agent lattices", limit: 99 });
+  assert.equal(ok.engine, "duckduckgo");
+  assert.deepEqual(ok.results.map(x => x.url), ["https://example.com/a?b=1", "https://two.example/"]);
+  assert.equal(ok.results[0].title, "Edge & cases");
+  assert.equal(ok.results[0].snippet, "About agent lattices");
+  assert.equal((await r.webSearchTool.run({ query: "x", limit: 1 })).results.length, 1);
+  assert.match((await r.webSearchTool.run({ query: "   " })).error, /query/);
+  assert.match((await r.webSearchTool.run({ query: { $ne: 1 } })).error, /query/);
+  mode = "blocked";
+  process.env.SEARCH_URL_BING = base + "/bing";
+  assert.match((await r.webSearchTool.run({ query: "x" })).error, /every search engine refused.*duckduckgo 202.*bing 202.*SEARXNG_URL/);
+  mode = "bing";
+  const bg = await r.webSearchTool.run({ query: "x" });
+  assert.equal(bg.engine, "bing", "falls through to the next engine when the first refuses");
+  assert.deepEqual(bg.results.map(x => x.url), ["https://www.ibm.com/think/topics/ai-agent-orchestration", "https://plain.example/"]);
+  assert.equal(bg.results[0].snippet, "What it is");
+  delete process.env.SEARCH_URL_BING;
+  mode = "searx"; process.env.SEARXNG_URL = base;
+  const sx = await r.webSearchTool.run({ query: "hello" });
+  assert.equal(sx.engine, "searxng"); assert.equal(sx.results[0].snippet, "hello");
+  delete process.env.SEARXNG_URL; delete process.env.SEARCH_URL;
+});
+
+test("web.scrape: structure, entities, scripts stripped, relative links, keyword hits, binary + huge pages", async () => {
+  process.env.WEB_ALLOW_PRIVATE = "true";
+  const r = await import("../../src/tools/research.js");
+  const base = await stub((req, res) => {
+    if (req.url === "/bin") { res.writeHead(200, { "content-type": "application/octet-stream" }); return res.end(Buffer.alloc(10)); }
+    if (req.url === "/huge") { res.writeHead(200, { "content-type": "text/plain" }); return res.end("a".repeat(3_000_000)); }
+    if (req.url === "/go") { res.writeHead(302, { location: "/page" }); return res.end(); }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(`<html><head><title>Lattice &#8211; notes</title><meta name="description" content="How agents talk"><script>var secret="no"</script><style>p{}</style></head>
+      <body><!-- hidden --><h1>Edge cases</h1><p>Queues keep turns fair. Nodes isolate work.</p><h2>Find &lt;me&gt;</h2>
+      <a href="/docs">Docs</a><a href="https://other.example/x">Other</a><a href="/docs">dup</a><a href="mailto:a@b">mail</a><a href="#top">top</a>
+      <p>&#x1F600; &#99999999; &bogus;</p></body></html>`);
+  });
+  const p = await r.webScrapeTool.run({ url: base + "/go", find: "NODES" });
+  assert.equal(p.url, base + "/page");
+  assert.equal(p.title, "Lattice – notes");
+  assert.equal(p.description, "How agents talk");
+  assert.deepEqual(p.headings, ["# Edge cases", "## Find <me>"]);
+  assert.doesNotMatch(p.text, /secret|hidden|p\{\}/);
+  assert.deepEqual(p.links.map(l => l.url), [base + "/docs", "https://other.example/x"]);
+  assert.deepEqual(p.matches, ["Nodes isolate work."]);
+  assert.match(p.text, /😀 &#99999999; &bogus;/, "bad entities are left alone, never crash");
+  assert.match((await r.webScrapeTool.run({ url: base + "/bin" })).error, /not a text page/);
+  const huge = await r.webScrapeTool.run({ url: base + "/huge", maxChars: 1e9 });
+  assert.equal(huge.text.length, 50_000); assert.equal(huge.truncated, true);
+  assert.match((await r.webScrapeTool.run({ url: "nope" })).error, /invalid url/);
+});
+
+test("github.search / github.read: shapes, validation, token, rate limit, traversal-proof paths", async () => {
+  process.env.WEB_ALLOW_PRIVATE = "true";
+  const r = await import("../../src/tools/research.js");
+  const seen = [];
+  const base = await stub((req, res) => {
+    seen.push({ url: req.url, auth: req.headers.authorization });
+    const json = (s, b, h = {}) => { res.writeHead(s, { "content-type": "application/json", ...h }); res.end(JSON.stringify(b)); };
+    if (req.url.startsWith("/search/repositories")) return json(200, { total_count: 1, items: [{ full_name: "a/b", description: "d", stargazers_count: 5, language: "JS", pushed_at: "t", html_url: "https://github.com/a/b" }] });
+    if (req.url.startsWith("/search/issues")) return json(403, { message: "API rate limit exceeded" }, { "x-ratelimit-remaining": "0" });
+    if (req.url === "/repos/a/b") return json(200, { full_name: "a/b", stargazers_count: 5, license: { spdx_id: "MIT" }, default_branch: "main" });
+    if (req.url.startsWith("/repos/a/b/readme")) return json(200, { path: "README.md", size: 5, encoding: "base64", content: Buffer.from("hello").toString("base64") });
+    if (req.url.split("?")[0] === "/repos/a/b/contents/src") return json(200, [{ name: "x.js", type: "file", size: 1 }]);
+    if (req.url.startsWith("/repos/a/b/contents/src/")) return json(200, { path: "src/x.js", encoding: "base64", content: Buffer.from("code").toString("base64") });
+    if (req.url.startsWith("/repos/a/b/releases")) return json(200, [{ tag_name: "v1", body: "notes" }]);
+    json(404, { message: "Not Found" });
+  });
+  process.env.GITHUB_API = base;
+  const s = await r.githubSearchTool.run({ query: "agent harness" });
+  assert.deepEqual(s.items[0], { repo: "a/b", description: "d", stars: 5, language: "JS", updated: "t", url: "https://github.com/a/b" });
+  assert.match((await r.githubSearchTool.run({ query: "x", type: "issues" })).error, /rate limit.*GITHUB_TOKEN/);
+  assert.match((await r.githubSearchTool.run({ query: "x", type: "code" })).error, /needs GITHUB_TOKEN/);
+  assert.match((await r.githubSearchTool.run({ query: "x", type: "users" })).error, /type must/);
+  assert.equal((await r.githubReadTool.run({ repo: "a/b" })).license, "MIT");
+  assert.equal((await r.githubReadTool.run({ repo: "a/b", what: "readme" })).content, "hello");
+  assert.equal((await r.githubReadTool.run({ repo: "a/b", what: "dir", path: "src" })).entries[0].name, "x.js");
+  assert.match((await r.githubReadTool.run({ repo: "a/b", what: "file", path: "src" })).error, /directory/);
+  assert.equal((await r.githubReadTool.run({ repo: "a/b", what: "file", path: "src/x.js" })).content, "code");
+  assert.equal((await r.githubReadTool.run({ repo: "a/b", what: "releases" })).releases[0].tag, "v1");
+  assert.match((await r.githubReadTool.run({ repo: "a/b", what: "file", path: "../../../src" })).error, /directory/, "../ segments are dropped, never sent");
+  assert.ok(seen.every(x => !x.url.includes("..")));
+  for (const bad of ["a", "a/b/c", "../x/y", "a/b?x=1", "", null, "a b/c"]) assert.match((await r.githubReadTool.run({ repo: bad })).error, /owner\/name/, String(bad));
+  assert.match((await r.githubReadTool.run({ repo: "a/b", what: "file" })).error, /path required/);
+  assert.match((await r.githubReadTool.run({ repo: "a/b", ref: "main;rm -rf" })).error, /bad ref/);
+  assert.match((await r.githubReadTool.run({ repo: "a/zz" })).error, /GitHub 404: Not Found/);
+  process.env.GITHUB_TOKEN = "t0k";
+  await r.githubSearchTool.run({ query: "y" });
+  assert.equal(seen.at(-1).auth, "Bearer t0k");
+  delete process.env.GITHUB_TOKEN; delete process.env.GITHUB_API; delete process.env.WEB_ALLOW_PRIVATE;
+});
+
+test("new agents are on the roster and get research tools; users can grant them to custom agents", async () => {
+  const cfg = JSON.parse((await import("node:fs")).readFileSync(new URL("../../config/agents.json", import.meta.url), "utf8"));
+  const ids = cfg.agents.map(a => a.id);
+  for (const id of ["grok-main", "grok-researcher", "grok-scout", "grok-engineer"]) assert.ok(ids.includes(id), id);
+  assert.ok(cfg.agents.find(a => a.id === "grok-scout").tools.includes("web.search"));
+  const { validate } = await import("../../src/middleware/agents-crud.js");
+  assert.deepEqual(validate({ name: "Scholar", job: "studies", instructions: "Research upgrades.", tools: ["web.search", "web.scrape", "github"] }, { partial: true }), []);
+  assert.ok(validate({ name: "X", tools: ["github.hack"] }, { partial: true }).length, "unknown tools still rejected");
+});

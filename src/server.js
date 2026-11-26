@@ -10,6 +10,7 @@ import { runAgent } from "./agents/runtime.js";
 import { terminalTool } from "./tools/terminal.js";
 import { browserTool } from "./tools/browser.js";
 import { webFetchTool } from "./tools/web.js";
+import { researchTools } from "./tools/research.js";
 import { ragTool } from "./rag/index.js";
 import { xSearchTool, xPostTool } from "./tools/xfeed.js";
 import { imagegenTool } from "./tools/imagegen.js";
@@ -38,7 +39,7 @@ async function main() {
 
   // 3. Live tools — every one of these is a real, running capability
   const baseTools = [
-    terminalTool, browserTool, webFetchTool, ragTool,
+    terminalTool, browserTool, webFetchTool, ...researchTools, ragTool,
     xSearchTool, xPostTool, imagegenTool, visionTool,
     taskBoardTool(),                       // run-scoped task board (Avrone)
     teamAskTool(() => tools),              // delegate to a named teammate

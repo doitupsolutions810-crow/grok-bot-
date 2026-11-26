@@ -51,7 +51,7 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
 
 const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load",
   "node.exec", "node.service", "node.info", "node.mcp",
-  "harness.list", "harness.read", "harness.propose", "harness.proposals"]);   // and can improve its own harness   // every agent has its own node
+  "harness.list", "harness.read", "harness.propose", "harness.proposals"]);   // own node + can improve its own harness
 function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
 
 export async function runAgent(agent, userMessage, tools, opts = {}) {

@@ -15,7 +15,7 @@ import * as registry from "../agents/registry.js";
 const MODELS = () => (process.env.MODELS_REQUIRED || "").split(",").map(s => s.trim()).filter(Boolean);
 const MODES = ["chat", "think", "deepsearch", "squad", "deep"];
 const ALL_TOOLS = [
-  "*", "terminal", "browser", "web.fetch", "x.search", "x.post", "imagegen",
+  "*", "terminal", "browser", "web.fetch", "web.search", "web.scrape", "github", "x.search", "x.post", "imagegen",
   "rag.search", "team.ask", "team.spawn", "task.board", "skill.list", "skill.load",
   "mcp.filesystem", "mcp.git", "voice.speak", "memory.recall", "node"
 ];

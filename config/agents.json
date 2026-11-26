@@ -4,16 +4,48 @@
     {
       "id": "grok-main",
       "name": "Grok Main",
-      "systemPrompt": "You are Grok Bot, the chief of staff — sharp, proactive, maximum-agency. Use tools whenever they help; work end-to-end and return finished work. Delegate to teammates with team.ask or team.spawn when a specialist fits the job.",
-      "tools": ["*"],
+      "systemPrompt": "You are Grok Bot, the chief of staff \u2014 sharp, proactive, maximum-agency. Use tools whenever they help; work end-to-end and return finished work. Delegate to teammates with team.ask or team.spawn when a specialist fits the job.",
+      "tools": [
+        "*"
+      ],
       "model": "qwen2.5:3b"
     },
     {
       "id": "grok-researcher",
       "name": "Grok Researcher",
-      "systemPrompt": "You research topics using the browser. Cite sources with URLs.",
-      "tools": ["browser", "web.fetch"],
+      "systemPrompt": "You research topics with web.search, web.scrape, github.search, github.read and the browser. Cite sources with URLs, and say what you could not verify.",
+      "tools": [
+        "browser",
+        "web.fetch",
+        "web.search",
+        "web.scrape",
+        "github"
+      ],
       "model": "qwen2.5:3b"
+    },
+    {
+      "id": "grok-scout",
+      "name": "Grok Scout",
+      "model": "qwen2.5:3b",
+      "tools": [
+        "web.search",
+        "web.scrape",
+        "web.fetch",
+        "github"
+      ],
+      "systemPrompt": "You scout the outside world for ideas that would make this team better: new tools, libraries, techniques and known failure modes. Search, read the sources, and report each finding to your teammates with its URL. Never present a guess as a fact."
+    },
+    {
+      "id": "grok-engineer",
+      "name": "Grok Engineer",
+      "model": "qwen2.5:3b",
+      "tools": [
+        "github",
+        "web.search",
+        "web.scrape",
+        "terminal"
+      ],
+      "systemPrompt": "You are the team's engineer. Study how other projects on GitHub solve a problem, read your own harness with harness.read, write and run code on your node with node.exec, and turn what works into a tested harness.propose. When a proposal fails, read the output, fix it, and propose again with basedOn."
     }
   ],
   "bots": [
@@ -21,38 +53,56 @@
       "id": "researcher",
       "name": "Researcher",
       "job": "Deep research on any topic: find sources, verify claims, write a cited brief",
-      "tools": ["browser", "web.fetch", "rag.search", "team.spawn"],
+      "tools": [
+        "browser",
+        "web.fetch",
+        "rag.search",
+        "team.spawn"
+      ],
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": false,
-      "emoji": "🔎"
+      "emoji": "\ud83d\udd0e"
     },
     {
       "id": "inbox-manager",
       "name": "Inbox Manager",
       "job": "Read and triage incoming messages and mentions, flag what needs a human",
-      "tools": ["browser", "web.fetch", "terminal"],
+      "tools": [
+        "browser",
+        "web.fetch",
+        "terminal"
+      ],
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": false,
-      "emoji": "📬"
+      "emoji": "\ud83d\udcec"
     },
     {
       "id": "bug-fixer",
       "name": "Bug Fixer",
       "job": "Reproduce reported bugs in the sandbox, diagnose the cause, propose a patch",
-      "tools": ["terminal", "browser", "web.fetch", "task.board"],
+      "tools": [
+        "terminal",
+        "browser",
+        "web.fetch",
+        "task.board"
+      ],
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": true,
-      "emoji": "🐛"
+      "emoji": "\ud83d\udc1b"
     }
   ],
   "mcpServers": {
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/data"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/app/data"
+      ]
     }
   }
 }

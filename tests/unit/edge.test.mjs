@@ -1636,16 +1636,16 @@ test("research env: RESEARCH_MAX_ACTIVE caps how many run at once (429 over HTTP
   const s = app.listen(0); s.unref();
   const base = `http://127.0.0.1:${s.address().port}/api`;
   const post = (p, body) => fetch(base + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const first = await post("/research/envs", { goal: "The first long research job", agents: ["grok-main"] });
+  const first = await post("/research/envs", { goal: "The first long research job", agents: ["grok-scout"] });
   assert.equal(first.status, 201);
   const id = (await first.json()).env.id;
-  assert.equal((await post("/research/envs", { goal: "The second long research job", agents: ["grok-main"] })).status, 429);
+  assert.equal((await post("/research/envs", { goal: "The second long research job", agents: ["grok-scout"] })).status, 429);
   assert.equal((await post("/research/envs", { goal: "x" })).status, 400);
   assert.equal((await fetch(`${base}/research/envs/${id}`)).status, 200);
   assert.equal((await fetch(`${base}/research/envs/env-..%2F..%2Fx`)).status, 404);
   assert.match(await (await fetch(`${base}/research/envs/${id}/report`)).text(), /^# The first long research job/);
   assert.equal((await post(`/research/envs/${id}/stop`, {})).status, 200);
-  assert.equal((await post("/research/envs", { goal: "Now there is room again", agents: ["grok-main"] })).status, 201, "a stopped env frees its slot");
+  assert.equal((await post("/research/envs", { goal: "Now there is room again", agents: ["grok-scout"] })).status, 201, "a stopped env frees its slot");
   assert.ok((await (await fetch(`${base}/research/envs`)).json()).envs.length >= 2);
   delete process.env.RESEARCH_MAX_ACTIVE; R._reset(); s.close();
 });
@@ -1792,4 +1792,31 @@ test("research env: malformed, truncated or foreign env files are ignored by lis
   assert.doesNotThrow(() => R.init({ getAgent: id => ({ id }), tools: [], runAgent: async () => "ok" }));
   assert.equal(R.control("env-junk04", "resume").status, 404);
   R._reset();
+});
+
+// ================= round 26: unattended research never gets a shell =================
+test("research env: shell-capable agents are refused on create and at step time unless the owner opts in", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  const roster = { "grok-main": { id: "grok-main", tools: ["*"] }, "grok-engineer": { id: "grok-engineer", tools: ["github", "terminal"] },
+    "grok-node": { id: "grok-node", tools: ["node.exec"] }, "grok-scout": { id: "grok-scout", tools: ["web.search", "mcp"] } };
+  const getAgent = id => roster[id];
+  for (const a of ["grok-main", "grok-engineer", "grok-node"]) {
+    const r = R.create({ goal: "map the edge cases of the scheduler", agents: ["grok-scout", a] }, { getAgent });
+    assert.match(r.error || "", new RegExp(`${a}.*shell`), a);
+  }
+  assert.equal(R.tooPowerful(roster["grok-scout"]), false);
+  assert.equal(R.tooPowerful({ id: "x" }), false, "no tools list means no shell");
+  process.env.RESEARCH_ALLOW_FULL_TOOLS = "true";
+  assert.equal(R.tooPowerful(roster["grok-main"]), false, "owner opt-in");
+  delete process.env.RESEARCH_ALLOW_FULL_TOOLS;
+  // an agent edited to gain a shell after the env started is refused at step time, without running
+  let ran = 0;
+  R.init({ getAgent: () => ({ id: "grok-scout", tools: ["web.search", "terminal"] }), tools: [], runAgent: async () => { ran++; return "ok"; } });
+  const { env } = R.create({ goal: "watch for a mid-run tool upgrade", agents: ["grok-scout"], stepIntervalSec: 3600 }, { getAgent: () => roster["grok-scout"] });
+  assert.ok(env, "created while the agent was still safe");
+  await R.stepOnce(env.id);
+  assert.equal(ran, 0, "never ran the now-shell-capable agent");
+  assert.ok(JSON.stringify(R.get(env.id).log).includes("shell-capable"), "refusal is logged on the env");
+  R.control(env.id, "stop"); R._reset();
 });

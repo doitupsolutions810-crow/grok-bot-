@@ -72,6 +72,15 @@ export function validate(body) {
   return errs;
 }
 
+// Unattended, hours-long, and reachable from the API and /mcp: no agent with a shell
+// (terminal, node.exec, the "*" wildcard) runs here unless the owner opts in.
+const SHELL_TOOLS = new Set(["*", "terminal", "node", "harness", "computer"]);
+export function tooPowerful(agent) {
+  if (process.env.RESEARCH_ALLOW_FULL_TOOLS === "true" || !agent) return false;
+  const tools = Array.isArray(agent.tools) ? agent.tools : [];
+  return tools.some(t => SHELL_TOOLS.has(String(t).split(".")[0]));
+}
+
 export function create(body, { getAgent } = deps || {}) {
   const errs = validate(body);
   if (errs.length) return { error: errs.join("; ") };
@@ -79,6 +88,8 @@ export function create(body, { getAgent } = deps || {}) {
   if (getAgent) {
     const ghost = agents.filter(a => !getAgent(a));
     if (ghost.length) return { error: `unknown agent(s): ${ghost.join(", ")}` };
+    const risky = agents.filter(a => tooPowerful(getAgent(a)));
+    if (risky.length) return { error: `agent(s) ${risky.join(", ")} can run shell commands; research environments run unattended for hours, so they take research agents only (set RESEARCH_ALLOW_FULL_TOOLS=true to allow)` };
   }
   const active = list({ limit: 200 }).filter(e => e.status === "running").length;
   if (active >= maxActive()) return { error: `${active} research environments are already running (RESEARCH_MAX_ACTIVE=${maxActive()}); pause or stop one first`, busy: true };
@@ -155,6 +166,7 @@ export async function stepOnce(id) {
   let outcome;
   try {
     if (!agent) throw new Error(`agent ${agentId} no longer exists`);
+    if (tooPowerful(agent)) throw new Error(`agent ${agentId} now has shell-capable tools; refusing to run it unattended`);
     const answer = await deps.runAgent(agent, brief(env), deps.tools, { runId: `${env.id}-s${env.step + 1}`, agentName: agentId, envId: env.id, maxSteps: 10 });
     outcome = { ok: true, text: clip(typeof answer === "string" ? answer : JSON.stringify(answer), 600) };
   } catch (e) { outcome = { ok: false, text: clip(e.message, 600) }; }

@@ -13,11 +13,15 @@ export function newRunId() {
   return `run-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
 
+// run ids become file names: only [A-Za-z0-9_.-], no "..", so a crafted id can't
+// read or write outside RUNS_DIR
+export const validRunId = id => typeof id === "string" && /^[\w.-]{1,128}$/.test(id) && !id.includes("..");
+
 export function emit(runId, kind, data = {}) {
-  if (!runId) return;
+  if (!validRunId(runId)) return;
   try {
     appendFileSync(`${RUNS_DIR}/${runId}.jsonl`,
-      JSON.stringify({ ts: new Date().toISOString(), kind, ...data }) + "\n");
+      JSON.stringify({ ...data, ts: new Date().toISOString(), kind }) + "\n");
   } catch (e) {
     console.warn(`[codex] emit failed for ${runId}/${kind}: ${e.message}`);
   }
@@ -25,6 +29,7 @@ export function emit(runId, kind, data = {}) {
 
 // Replay a run: every parseable event, in order. Never throws on corruption.
 export function replay(runId) {
+  if (!validRunId(runId)) return null;
   const file = `${RUNS_DIR}/${runId}.jsonl`;
   if (!existsSync(file)) return null;
   const events = [];

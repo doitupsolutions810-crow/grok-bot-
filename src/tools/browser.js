@@ -32,21 +32,27 @@ export const browserTool = {
     },
     required: ["url"]
   },
-  async run({ url, action = "read", selector, text }) {
+  async run({ url, action = "read", selector, text } = {}) {
+    // the browser container has its own disk: no file://, chrome://, javascript: etc.
+    let u;
+    try { u = new URL(String(url)); } catch { return { error: "invalid url" }; }
+    if (!["http:", "https:"].includes(u.protocol)) return { error: `unsupported protocol ${u.protocol}` };
+    if (!["read", "click", "type"].includes(action)) return { error: "action must be read, click or type" };
+    if (action !== "read" && (typeof selector !== "string" || !selector)) return { error: `${action} needs a selector` };
     const browser = await connectCDP();
     try {
       const ctx = browser.contexts()[0] || (await browser.newContext());
       const page = ctx.pages()[0] || (await ctx.newPage());
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      await page.goto(u.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
       if (action === "click" && selector) {
         await page.click(selector);
         await page.waitForTimeout(500);
       }
       if (action === "type" && selector) {
-        await page.fill(selector, text || "");
+        await page.fill(selector, typeof text === "string" ? text : String(text ?? ""));
       }
       const title = await page.title();
-      const content = await page.evaluate(() => document.body.innerText);
+      const content = await page.evaluate(() => document.body?.innerText || "");
       return { title, url: page.url(), content: content.slice(0, 12_000) };
     } finally {
       await browser.close();   // closes the CDP connection, not the shared browser

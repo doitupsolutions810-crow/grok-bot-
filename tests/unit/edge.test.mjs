@@ -552,3 +552,63 @@ test("custom agents: name + instructions survive a restart-style reload and reac
   await mods.runtime.runAgent(a, "hi", []);
   assert.match(seen.at(-1).messages[0].content, /Sign every answer with NS/);
 });
+
+// ================= round 5: run log, task board, browser/imagegen/MCP inputs =================
+test("CodeX: crafted run ids can't read or write outside RUNS_DIR; events keep their kind", async () => {
+  const codex = await import("../../src/agents/codex.js");
+  const { existsSync } = await import("node:fs");
+  for (const id of ["../../etc/passwd", "..", "a/b", "", null, "x".repeat(200)]) {
+    assert.equal(codex.replay(id), null, String(id));
+    codex.emit(id, "x");
+  }
+  assert.ok(!existsSync(join(tmp, "evil.jsonl")));
+  const id = codex.newRunId();
+  codex.emit(id, "run.start", { kind: "spoofed", ts: "1999" });
+  const r = codex.replay(id);
+  assert.equal(r.events[0].kind, "run.start"); assert.notEqual(r.events[0].ts, "1999");
+  const api = await full();
+  assert.equal((await api("GET", "/runs/..%2F..%2Fetc%2Fpasswd")).status, 404);
+  assert.equal((await api("GET", `/runs/${id}`)).status, 200);
+});
+
+test("task board: bad actions, junk titles, caps, and per-run isolation", async () => {
+  const { taskBoardTool } = await import("../../src/agents/taskboard.js");
+  const tb = taskBoardTool(), A = { run: { runId: "rA" } }, B = { run: { runId: "rB" } };
+  assert.match((await tb.run({ action: "add", title: "x" }, {})).error, /run-scoped/);
+  assert.match((await tb.run({ action: "nuke" }, A)).error, /unknown action/);
+  assert.match((await tb.run({ action: "add", title: { a: 1 } }, A)).error, /title required/);
+  const c = (await tb.run({ action: "add", title: "  Write   tests " }, A)).card;
+  assert.equal(c.title, "Write tests");
+  assert.equal((await tb.run({ action: "add", title: "write TESTS" }, A)).dedupe, true);
+  assert.equal((await tb.run({ action: "list" }, B)).cards.length, 0);
+  assert.equal((await tb.run({ action: "update", id: c.id, owner: { x: 1 } }, A)).card.status, "in_progress");
+  for (let i = 0; i < 205; i++) await tb.run({ action: "add", title: `card ${i}` }, A);
+  assert.equal((await tb.run({ action: "list" }, A)).cards.length, 200);
+  assert.match((await tb.run({ action: "done", id: "t999" }, A)).error, /no card/);
+});
+
+test("browser tool refuses file://, javascript:, junk urls and selector-less actions before connecting", async () => {
+  const { browserTool } = await import("../../src/tools/browser.js");
+  for (const url of ["file:///etc/passwd", "javascript:alert(1)", "chrome://settings", "nope", undefined])
+    assert.ok((await browserTool.run({ url })).error, String(url));
+  assert.match((await browserTool.run({ url: "https://x.test", action: "click" })).error, /selector/);
+  assert.match((await browserTool.run({ url: "https://x.test", action: "eval" })).error, /action must/);
+});
+
+test("imagegen: rejected ComfyUI job fails fast instead of polling /history/undefined", async () => {
+  const { imagegenTool } = await import("../../src/tools/imagegen.js");
+  const comfy = http.createServer((req, res) => { res.writeHead(400, { "content-type": "application/json" }); res.end('{"error":{"message":"ckpt missing"}}'); });
+  await new Promise(r => comfy.listen(0, "127.0.0.1", r));
+  process.env.COMFYUI_URL = `http://127.0.0.1:${comfy.address().port}`;
+  const t0 = Date.now();
+  const out = await imagegenTool.run({ prompt: "a cat" });
+  assert.match(out.error, /rejected/); assert.ok(Date.now() - t0 < 3000);
+  assert.match((await imagegenTool.run({})).error, /prompt required/);
+  comfy.close(); delete process.env.COMFYUI_URL;
+});
+
+test("MCP: junk server configs are skipped without spawning anything", async () => {
+  const { loadMCPTools } = await import("../../src/tools/mcp.js");
+  assert.deepEqual(await loadMCPTools(undefined), []);
+  assert.deepEqual(await loadMCPTools({ a: null, b: { transport: "stdio" }, c: { transport: "http", command: "x" } }), []);
+});

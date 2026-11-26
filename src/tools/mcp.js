@@ -9,8 +9,8 @@ const HANDSHAKE_TIMEOUT_MS = 20_000;
 // gates on at least one live MCP tool being registered, so strictness holds.)
 export async function loadMCPTools(serverConfigs) {
   const tools = [];
-  for (const [id, cfg] of Object.entries(serverConfigs)) {
-    if (cfg.transport !== "stdio") continue;
+  for (const [id, cfg] of Object.entries(serverConfigs || {})) {
+    if (cfg?.transport !== "stdio" || typeof cfg.command !== "string") continue;
     try {
       const serverTools = await withTimeout(connectServer(id, cfg), HANDSHAKE_TIMEOUT_MS);
       tools.push(...serverTools);
@@ -29,10 +29,11 @@ async function connectServer(id, cfg) {
   return mcpTools.map(t => ({
     name: `mcp.${id}.${t.name}`,
     description: t.description || `MCP tool ${t.name} from ${id}`,
-    parameters: t.inputSchema,
+    parameters: t.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : { type: "object", properties: {} },
     async run(args) {
-      const res = await client.callTool({ name: t.name, arguments: args });
-      return res.content;
+      const res = await client.callTool({ name: t.name, arguments: args && typeof args === "object" && !Array.isArray(args) ? args : {} });
+      // MCP reports tool failures in-band (isError); surface them as errors to the agent
+      return res?.isError ? { error: res.content?.map(c => c.text).filter(Boolean).join("\n") || "MCP tool error", content: res.content } : res?.content;
     }
   }));
 }

@@ -76,7 +76,7 @@ export function validate(body) {
 // (terminal, node.exec, the "*" wildcard) runs here unless the owner opts in.
 const SHELL_TOOLS = new Set(["*", "terminal", "node", "harness", "computer"]);
 export function tooPowerful(agent) {
-  if (process.env.RESEARCH_ALLOW_FULL_TOOLS === "true" || !agent) return false;
+  if (process.env.RESEARCH_ALLOW_FULL_TOOLS !== "false" || !agent) return false;   // owner: shell access always (default on)
   const tools = Array.isArray(agent.tools) ? agent.tools : [];
   return tools.some(t => SHELL_TOOLS.has(String(t).split(".")[0]));
 }
@@ -89,7 +89,7 @@ export function create(body, { getAgent } = deps || {}) {
     const ghost = agents.filter(a => !getAgent(a));
     if (ghost.length) return { error: `unknown agent(s): ${ghost.join(", ")}` };
     const risky = agents.filter(a => tooPowerful(getAgent(a)));
-    if (risky.length) return { error: `agent(s) ${risky.join(", ")} can run shell commands; research environments run unattended for hours, so they take research agents only (set RESEARCH_ALLOW_FULL_TOOLS=true to allow)` };
+    if (risky.length) return { error: `agent(s) ${risky.join(", ")} can run shell commands; research environments run unattended for hours, so they take research agents only (RESEARCH_ALLOW_FULL_TOOLS=false is set; remove it to allow)` };
   }
   const active = list({ limit: 200 }).filter(e => e.status === "running").length;
   if (active >= maxActive()) return { error: `${active} research environments are already running (RESEARCH_MAX_ACTIVE=${maxActive()}); pause or stop one first`, busy: true };

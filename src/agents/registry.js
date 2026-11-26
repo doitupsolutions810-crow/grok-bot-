@@ -76,7 +76,8 @@ export function deleteBot(id) {
 // A user-created teammate is stored as { name, job, instructions, ... }. The
 // runtime only reads systemPrompt, so every lookup materializes one here —
 // otherwise a custom agent's name and custom instructions never reach the model.
-const DEFAULT_TOOLS = ["terminal", "browser", "web.fetch"];
+export const DEFAULT_TOOLS = ["terminal", "browser", "web.search", "web.fetch", "web.scrape", "github"];
+export const _defaultTools = DEFAULT_TOOLS;
 export function toAgent(b) {
   if (!b) return b;
   const name = b.name || b.id;

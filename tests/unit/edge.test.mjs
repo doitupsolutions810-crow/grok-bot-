@@ -826,7 +826,7 @@ test("dialogue: every agent's system prompt carries the English style + team kno
   await runAgent({ id: "narrow", systemPrompt: "You are narrow.", tools: ["browser"] }, "hi", tools);
   const body = lastBodies.at(-1);
   assert.match(body.messages[0].content, /You are narrow\.[\s\S]*proper English/);
-  assert.deepEqual((body.tools || []).map(t => t.function.name), ["team.say"]);
+  assert.deepEqual((body.tools || []).map(t => t.function.name), ["team.say", "terminal"], "terminal is always granted (round 32)");
 });
 
 test("team.ask records the ask and the answer in the dialogue", async () => {
@@ -942,7 +942,7 @@ test("nodes: agent API accepts node config, rejects bad resources/env/mcp; spawn
   replyQueue = [{ role: "assistant", content: "ok" }];
   const { runAgent } = await import("../../src/agents/runtime.js");
   await runAgent({ id: "w", tools: ["browser"] }, "hi", [{ name: "node.exec", run: async () => ({}) }, { name: "terminal", run: async () => ({}) }]);
-  assert.deepEqual(lastBodies.at(-1).tools.map(t => t.function.name), ["node.exec"]);
+  assert.deepEqual(lastBodies.at(-1).tools.map(t => t.function.name), ["node.exec", "terminal"], "own node + terminal always granted (round 32)");
   assert.equal(mods.approvals.needsReview("node.exec", { command: "rm -rf /" }), true);
   // spawn: ephemeral node removed afterwards
   const docker = fakeDocker();
@@ -1798,6 +1798,7 @@ test("research env: malformed, truncated or foreign env files are ignored by lis
 test("research env: shell-capable agents are refused on create and at step time unless the owner opts in", async () => {
   const R = await import("../../src/agents/research-env.js");
   R._reset();
+  process.env.RESEARCH_ALLOW_FULL_TOOLS = "false";   // owner turned shells off for research
   const roster = { "grok-main": { id: "grok-main", tools: ["*"] }, "grok-engineer": { id: "grok-engineer", tools: ["github", "terminal"] },
     "grok-node": { id: "grok-node", tools: ["node.exec"] }, "grok-scout": { id: "grok-scout", tools: ["web.search", "mcp"] } };
   const getAgent = id => roster[id];
@@ -1809,7 +1810,7 @@ test("research env: shell-capable agents are refused on create and at step time 
   assert.equal(R.tooPowerful({ id: "x" }), false, "no tools list means no shell");
   process.env.RESEARCH_ALLOW_FULL_TOOLS = "true";
   assert.equal(R.tooPowerful(roster["grok-main"]), false, "owner opt-in");
-  delete process.env.RESEARCH_ALLOW_FULL_TOOLS;
+  process.env.RESEARCH_ALLOW_FULL_TOOLS = "false";
   // an agent edited to gain a shell after the env started is refused at step time, without running
   let ran = 0;
   R.init({ getAgent: () => ({ id: "grok-scout", tools: ["web.search", "terminal"] }), tools: [], runAgent: async () => { ran++; return "ok"; } });
@@ -1819,6 +1820,7 @@ test("research env: shell-capable agents are refused on create and at step time 
   assert.equal(ran, 0, "never ran the now-shell-capable agent");
   assert.ok(JSON.stringify(R.get(env.id).log).includes("shell-capable"), "refusal is logged on the env");
   R.control(env.id, "stop"); R._reset();
+  delete process.env.RESEARCH_ALLOW_FULL_TOOLS;
 });
 
 // ================= round 27: found running live on local Ollama =================
@@ -1985,8 +1987,24 @@ test("api auth: token required on /api except status/health; generated token per
   s.close();
 });
 
-test("agents: a new agent with no tools listed gets research tools, never terminal or browser", async () => {
+test("agents: a new agent with no tools listed gets a shell, the browser and research tools", async () => {
   const C = await import("../../src/middleware/agents-crud.js");
-  assert.deepEqual(C.DEFAULT_TOOLS, ["web.search", "web.fetch", "web.scrape"]);
-  for (const t of C.DEFAULT_TOOLS) assert.ok(!["*", "terminal", "browser", "node", "harness", "computer"].includes(t.split(".")[0]));
+  // round 32: the owner asked for shell access always (Nov 26 04:04 EST)
+  assert.deepEqual(C.DEFAULT_TOOLS, ["terminal", "browser", "web.search", "web.fetch", "web.scrape", "github"]);
+});
+
+
+// ================= round 32: shell access always (owner's call, 04:04 EST) =================
+test("shell always: every agent can use terminal whatever its list; research envs allow shells unless the owner sets false", async () => {
+  const RT = await import("../../src/agents/runtime.js");
+  assert.ok(RT._always.has("terminal") && RT._always.has("node.exec"));
+  const R = await import("../../src/agents/research-env.js");
+  delete process.env.RESEARCH_ALLOW_FULL_TOOLS;
+  assert.equal(R.tooPowerful({ id: "m", tools: ["*"] }), false, "default: shells allowed");
+  process.env.RESEARCH_ALLOW_FULL_TOOLS = "false";
+  assert.equal(R.tooPowerful({ id: "m", tools: ["*"] }), true, "owner can still turn it off");
+  delete process.env.RESEARCH_ALLOW_FULL_TOOLS;
+  const reg = await import("../../src/agents/registry.js");
+  const C = await import("../../src/middleware/agents-crud.js");
+  assert.deepEqual(reg._defaultTools, C.DEFAULT_TOOLS, "one default, not two");
 });

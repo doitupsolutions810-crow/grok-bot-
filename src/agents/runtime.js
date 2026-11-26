@@ -51,10 +51,12 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
   return null;
 }
 
-const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load",
+// shell access always (owner, Nov 26): every agent gets the terminal and its own node
+const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load", "terminal",
   "node.exec", "node.service", "node.info", "node.mcp",
   "harness.list", "harness.read", "harness.propose", "harness.proposals",
   "mind.think", "mind.journal", "mind.goals", "env.record", "env.state"]);   // own node + can improve its own harness
+export const _always = ALWAYS;
 function safeMind(id) { try { return mindContext(id); } catch { return ""; } }
 function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
 

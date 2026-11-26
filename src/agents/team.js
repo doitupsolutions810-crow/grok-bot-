@@ -57,12 +57,19 @@ export function teamAskTool(getTools) {
       properties: { bot: { type: "string" }, task: { type: "string" } },
       required: ["bot", "task"]
     },
-    async run({ bot, task }, ctx) {
+    async run({ bot, task } = {}, ctx) {
+      const raw = Number(process.env.GROK_MAX_SPAWN_DEPTH);
+      const max = Number.isFinite(raw) && process.env.GROK_MAX_SPAWN_DEPTH ? Math.min(Math.max(1, Math.floor(raw)), 8) : 2;
+      const d = Number(ctx?.spawnDepth);
+      const depth = Number.isFinite(d) && d > 0 ? Math.floor(d) : 0;
+      // delegation counts as depth too, so two teammates can't ping-pong forever
+      if (depth >= max) return { error: `delegation depth limit reached — answer this yourself` };
+      if (typeof task !== "string" || !task.trim()) return { error: "task required" };
       const b = getAgent(bot);
       if (!b) return { error: `no teammate named ${bot}` };
       sendMail(ctx?.agent || "caller", b.id, String(task ?? ""));
       const answer = await runAgent(b, String(task ?? ""), getTools(), {
-        runId: ctx?.run?.runId, agentName: b.id, spawnDepth: ctx?.spawnDepth
+        runId: ctx?.run?.runId, agentName: b.id, spawnDepth: depth + 1
       });
       return { delegated: true, teammate: b.id, answer };
     }

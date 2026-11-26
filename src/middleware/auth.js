@@ -14,7 +14,7 @@ export function issueToken() {
 }
 
 export function authRequired(req, res, next) {
-  const token = (req.headers.authorization || "").replace(/^Bearer /, "") || req.query.token;
-  if (!sessions.has(token)) return res.status(401).json({ error: "unauthorized" });
+  const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() || String(req.query?.token || "");
+  if (!token || !sessions.has(token)) return res.status(401).json({ error: "unauthorized" });
   next();
 }

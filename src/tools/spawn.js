@@ -6,7 +6,9 @@ import { runAgent } from "../agents/runtime.js";
 import { findAgent } from "../agents/registry.js";
 
 export function spawnTool(getTools) {
-  const MAX_DEPTH = Math.max(0, Number(process.env.GROK_MAX_SPAWN_DEPTH) || 2);
+  const raw = Number(process.env.GROK_MAX_SPAWN_DEPTH);
+  // "0" must disable spawning (|| 2 used to turn it back into 2); cap runaway values.
+  const MAX_DEPTH = Number.isFinite(raw) && process.env.GROK_MAX_SPAWN_DEPTH !== "" ? Math.min(Math.max(0, Math.floor(raw)), 8) : 2;
   return {
     name: "team.spawn",
     description: `Spawn a subagent to handle a self-contained subtask in parallel with your own work. They share your computer and run context. Max spawn depth: ${MAX_DEPTH}.`,
@@ -18,8 +20,10 @@ export function spawnTool(getTools) {
       },
       required: ["task"]
     },
-    async run({ task, agentId }, ctx) {
-      const depth = ctx?.spawnDepth ?? 0;
+    async run({ task, agentId } = {}, ctx) {
+      if (typeof task !== "string" || !task.trim()) return { error: "task required" };
+      const d = Number(ctx?.spawnDepth);
+      const depth = Number.isFinite(d) && d > 0 ? Math.floor(d) : 0;
       if (depth >= MAX_DEPTH) return { error: `spawn depth limit (${MAX_DEPTH}) reached — handle this subtask yourself` };
       const agent = findAgent(agentId || "grok-main");
       const answer = await runAgent(agent, task, getTools(), {

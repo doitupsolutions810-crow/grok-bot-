@@ -33,9 +33,11 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     emit(opts.runId, "agent.message", { agent: ctx.agent, calls: reply.tool_calls.length });
 
     for (const call of reply.tool_calls) {
-      const name = call.function.name;
+      const name = call.function?.name || "";
       let parsedArgs = {};
-      try { parsedArgs = JSON.parse(call.function.arguments || "{}"); } catch { parsedArgs = { raw: call.function.arguments }; }
+      try { parsedArgs = JSON.parse(call.function?.arguments || "{}"); } catch { parsedArgs = { raw: call.function?.arguments }; }
+      // models sometimes emit "null", a bare string, or an array — tools always get an object
+      if (!parsedArgs || typeof parsedArgs !== "object" || Array.isArray(parsedArgs)) parsedArgs = { value: parsedArgs };
       emit(opts.runId, "tool.call", { agent: ctx.agent, tool: name });
 
       // Auto Review: dangerous calls pause the thread for a human decision

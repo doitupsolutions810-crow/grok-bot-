@@ -1033,3 +1033,64 @@ test("lattice API: events, agent timeline, graph, live SSE follow, grow validati
   const t = lattice.nextTopic([{ text: "cache is stale", agent: "a" }], [{ agent: "b", text: "tool timeout" }]);
   assert.match(t, /cache is stale \(a\)/); assert.match(t, /b: tool timeout/);
 });
+
+// ================= round 13: owner's mission, timed sessions, highlights =================
+test("lattice mission: env beats file; the owner's mission file is read; topics conclude on it", async () => {
+  const lattice = await import("../../src/agents/lattice.js");
+  const m = lattice.mission();
+  assert.match(m, /edge cases/); assert.match(m, /EUREKA:/);
+  process.env.LATTICE_MISSION = "  Test only the scheduler.  ";
+  assert.equal(lattice.mission(), "Test only the scheduler.");
+  delete process.env.LATTICE_MISSION;
+  const t = lattice.nextTopic([], [], "MISSION X");
+  assert.ok(t.startsWith("Standing mission from the owner:\nMISSION X")); assert.match(t, /node\.exec/);
+});
+
+test("lattice session: runs cycles back to back until time is up, bypasses the daily cap, refuses a second session, stops on request", async () => {
+  const lattice = await import("../../src/agents/lattice.js");
+  process.env.LATTICE_MAX_CYCLES_PER_DAY = "0";
+  let n = 0;
+  const deps = { council: async () => { n++; await new Promise(r => setTimeout(r, 20)); return { runId: `s${n}`, dialogue: [1] }; },
+    knowledge: () => [], runAgent() {}, tools: [], getAgent() {} };
+  const out = lattice.startSession(deps, { minutes: 1, agents: ["a", "b"] });
+  assert.equal(out.started, true);
+  assert.match(lattice.startSession(deps, { minutes: 1 }).error, /already running/);
+  await new Promise(r => setTimeout(r, 150));
+  lattice.stopSession();
+  while (lattice.sessionStatus().active) await new Promise(r => setTimeout(r, 10));
+  const s = lattice.sessionStatus();
+  assert.ok(s.cycles >= 2, `cycles ${s.cycles}`); assert.equal(s.runIds[0], "s1");
+  delete process.env.LATTICE_MAX_CYCLES_PER_DAY;
+  // a broken model must not spin the loop
+  const bad = { ...deps, council: async () => { throw new Error("model down"); } };
+  lattice.startSession(bad, { minutes: 1 });
+  await new Promise(r => setTimeout(r, 100));
+  lattice.stopSession();
+  while (lattice.sessionStatus().active) await new Promise(r => setTimeout(r, 50));
+  assert.ok(lattice.sessionStatus().cycles <= 2);
+});
+
+test("lattice highlights: eurekas first, dedupes, ignores the human/lattice voice, node code ranks; session API validates", async () => {
+  const lattice = await import("../../src/agents/lattice.js");
+  lattice.reset();
+  lattice.record("say", { agent: "human", runId: "r1", text: "x".repeat(900) });
+  lattice.record("say", { agent: "a", to: "b", runId: "r1", text: "Short note." });
+  lattice.record("tool_call", { agent: "b", runId: "r1", text: "node.exec" });
+  lattice.record("eureka", { agent: "b", runId: "r1", text: "Retries hide the real failure." });
+  lattice.record("eureka", { agent: "b", runId: "r1", text: "Retries hide the real failure." });
+  lattice.record("thought", { agent: "c", runId: "other", text: "not in this session" });
+  const h = lattice.highlights({ runIds: ["r1"] });
+  assert.equal(h[0].kind, "eureka"); assert.equal(h.filter(e => e.kind === "eureka").length, 1);
+  assert.ok(!h.some(e => e.agent === "human" || e.runId === "other"));
+  assert.ok(h.findIndex(e => e.text === "node.exec") >= 0);
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json());
+  app.use("/api", makeRouter({ tools: [], docker: { listContainers: async () => [] } }));
+  const s = app.listen(0); s.unref();
+  const u = `http://127.0.0.1:${s.address().port}/api`;
+  const post = b => fetch(u + "/lattice/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }).then(r => r.status);
+  assert.equal(await post({ minutes: 0 }), 400); assert.equal(await post({ minutes: 61 }), 400);
+  assert.equal(await post({ agents: ["only-one"] }), 400); assert.equal(await post({ agents: ["grok-main", "ghost"] }), 400);
+  assert.match((await (await fetch(u + "/lattice/mission")).json()).mission, /edge cases/);
+  assert.equal((await (await fetch(u + "/lattice/highlights?runIds=r1")).json()).highlights[0].kind, "eureka");
+});

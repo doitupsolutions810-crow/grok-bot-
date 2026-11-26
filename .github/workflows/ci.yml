@@ -11,7 +11,7 @@ concurrency:
 jobs:
   live:
     runs-on: ubuntu-24.04    # pinned: ubuntu-latest migrated to Ubuntu 26 on 2026-10-19 (actions/runner-images#14748)
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       LLM_MODEL: qwen2.5:3b
       MODELS_REQUIRED: qwen2.5:3b,nomic-embed-text
@@ -113,6 +113,38 @@ jobs:
               console.log(`::notice title=lattice ${e.agent} ${e.kind}::${esc(e.text).slice(0, 500)}`);
             console.log(`lattice: ${ev.length} events, ${g.nodes.length} agents, ${g.edges.length} edges`);
           '
+
+      - name: Lattice session (10 minutes of autonomous agents on the owner's mission)
+        timeout-minutes: 25
+        run: |
+          curl -fsS -X POST http://localhost:3000/api/lattice/session -H 'content-type: application/json' \
+            -d '{"minutes":10,"agents":["grok-main","edge-critic","grok-researcher"]}' | tee session.json
+          for i in $(seq 1 150); do
+            active=$(curl -fsS http://localhost:3000/api/lattice/session | node -pe 'JSON.parse(require("fs").readFileSync(0)).active')
+            [ "$active" = "false" ] && break; sleep 10
+          done
+          curl -fsS http://localhost:3000/api/lattice/session | tee session-final.json
+          curl -fsS "http://localhost:3000/api/lattice/highlights?limit=40" -o highlights.json
+          curl -fsS "http://localhost:3000/api/lattice/events?limit=2000" -o lattice-all.json
+          node -e '
+            const h = require("./highlights.json").highlights, s = require("./session-final.json"), fs = require("fs");
+            const esc = t => String(t).replace(/\s+/g, " ").replace(/%/g, "%25");
+            const md = [`## Lattice session: ${s.cycles} growth cycles in 10 minutes`, ...h.map(e => `**${e.agent}${e.to && e.to !== "*" ? " → " + e.to : ""}** (${e.kind}): ${e.text}`)];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n\n") + "\n");
+            for (const e of h.slice(0, 8)) console.log(`::notice title=session ${e.agent} ${e.kind}::${esc(e.text).slice(0, 900)}`);
+            console.log(`session: ${s.cycles} cycles, ${h.length} highlights`);
+          '
+
+      - name: Upload the agents' full logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lattice-logs
+          path: |
+            lattice-all.json
+            highlights.json
+            council.json
+          if-no-files-found: ignore
 
       - name: Agents' evolution loop (writes EVOLVE.md from the live runs)
         run: docker compose exec -T grok-bot node scripts/evolve.js

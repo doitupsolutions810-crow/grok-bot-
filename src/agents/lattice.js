@@ -120,11 +120,23 @@ export const status = () => ({
 const maxPerDay = () => Math.max(0, Number(process.env.LATTICE_MAX_CYCLES_PER_DAY ?? 24) || 0);
 const intervalMin = () => Math.max(5, Number(process.env.LATTICE_INTERVAL_MIN) || 30);
 
-// Build the next topic from what the team has learned and where it struggled.
-export function nextTopic(knowledge = [], recentErrors = []) {
+// The standing mission every growth cycle concludes on: LATTICE_MISSION, else the owner's
+// mission file (config/lattice-mission.txt), else a built-in default.
+export function mission() {
+  if (process.env.LATTICE_MISSION && process.env.LATTICE_MISSION.trim()) return process.env.LATTICE_MISSION.trim().slice(0, 6000);
+  for (const f of [process.env.LATTICE_MISSION_FILE, path.join(process.cwd(), "config", "lattice-mission.txt")].filter(Boolean)) {
+    try { const t = fs.readFileSync(f, "utf8").trim(); if (t) return t.slice(0, 6000); } catch {}
+  }
+  return "Keep testing this system against new edge cases, fix what breaks, and share what you learn.";
+}
+
+// Build the next topic from the mission, what the team has learned, and where it struggled.
+export function nextTopic(knowledge = [], recentErrors = [], missionText = mission()) {
   const k = knowledge.slice(0, 5).map(e => `- ${e.text} (${e.agent})`).join("\n");
   const errs = recentErrors.slice(-3).map(e => `- ${e.agent}: ${e.text.slice(0, 200)}`).join("\n");
   return [
+    `Standing mission from the owner:\n${missionText}`,
+    "You can write and run code on your own node with node.exec (and keep services running with node.service) to test and fix things yourself.",
     "Autonomous growth cycle. Review what the team has discovered and where it has struggled, then choose ONE concrete improvement",
     "to test or build now with your tools, carry it out, and report the result.",
     k ? `Discoveries so far:\n${k}` : "The team has no recorded discoveries yet: start by testing one capability end to end and recording what you learn.",
@@ -133,11 +145,11 @@ export function nextTopic(knowledge = [], recentErrors = []) {
   ].filter(Boolean).join("\n\n");
 }
 
-export async function growOnce({ council, runAgent, tools, getAgent, knowledge, agents }) {
+export async function growOnce({ council, runAgent, tools, getAgent, knowledge, agents, force = false }) {
   const today = new Date().toISOString().slice(0, 10);
   if (state.day !== today) { state.day = today; state.today = 0; }
   if (state.running) return { skipped: "a growth cycle is already running" };
-  if (state.today >= maxPerDay()) return { skipped: `daily limit reached (${maxPerDay()})` };
+  if (!force && state.today >= maxPerDay()) return { skipped: `daily limit reached (${maxPerDay()})` };
   state.running = true; state.today++;
   const startedAt = new Date().toISOString();
   const roster = (agents && agents.length >= 2 ? agents : ["grok-main", "grok-researcher"]).slice(0, 4);
@@ -158,6 +170,48 @@ export async function growOnce({ council, runAgent, tools, getAgent, knowledge, 
     state.running = false;
     if (state.cycles.length > 100) state.cycles = state.cycles.slice(-100);
   }
+}
+
+// A timed session: growth cycles back to back for `minutes` (1..60), in the background.
+const session = { active: false, id: "", startedAt: "", endsAt: "", cycles: 0, runIds: [], stop: false };
+export const sessionStatus = () => ({ ...session, runIds: [...session.runIds] });
+export function startSession(deps, { minutes = 10, agents } = {}) {
+  if (session.active) return { error: "a session is already running", session: sessionStatus() };
+  const mins = Math.min(Math.max(1, Number(minutes) || 10), 60);
+  const now = Date.now();
+  Object.assign(session, { active: true, stop: false, id: `session-${now.toString(36)}`, startedAt: new Date(now).toISOString(),
+    endsAt: new Date(now + mins * 60_000).toISOString(), cycles: 0, runIds: [] });
+  record("cycle", { agent: "lattice", text: `session ${session.id} started for ${mins} min`, data: { agents: agents || null } });
+  (async () => {
+    try {
+      while (!session.stop && Date.now() < now + mins * 60_000) {
+        const c = await growOnce({ ...deps, agents, force: true });
+        if (c.skipped) { await new Promise(r => setTimeout(r, 2000)); continue; }
+        session.cycles++;
+        if (c.runId) session.runIds.push(c.runId);
+        if (!c.ok) await new Promise(r => setTimeout(r, 2000));    // don't spin on a broken model
+      }
+    } finally {
+      session.active = false;
+      record("cycle", { agent: "lattice", text: `session ${session.id} finished: ${session.cycles} cycles` });
+    }
+  })();
+  return { started: true, session: sessionStatus() };
+}
+export function stopSession() { session.stop = true; return sessionStatus(); }
+
+// The most interesting moments: discoveries first, then the richest agent messages and
+// thoughts, then the code they ran on their own nodes.
+export function highlights({ runIds, limit = 10 } = {}) {
+  const set = runIds?.length ? new Set(runIds) : null;
+  const pool = ring.filter(e => (!set || set.has(e.runId) || e.kind === "eureka") && e.agent && e.agent !== "human" && e.agent !== "lattice");
+  const score = e => (e.kind === "eureka" ? 1000 : 0) + (e.kind === "say" ? 300 : 0) + (e.kind === "thought" ? 200 : 0) +
+    (e.kind === "tool_call" && /^node\./.test(e.text) ? 150 : 0) + (/EUREKA:/i.test(e.text) ? 500 : 0) + Math.min(e.text.length, 800) / 4;
+  const seen = new Set();
+  return pool.filter(e => ["eureka", "say", "thought", "tool_call", "answer"].includes(e.kind))
+    .sort((a, b) => score(b) - score(a))
+    .filter(e => { const k = e.text.slice(0, 120).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, Math.min(Math.max(1, Number(limit) || 10), 100));
 }
 
 export function startAutonomy(deps) {

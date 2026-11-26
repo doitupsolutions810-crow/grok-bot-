@@ -297,6 +297,21 @@ export function makeRouter({ tools, docker }) {
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000); ping.unref?.();
     req.on("close", () => { off(); clearInterval(ping); });
   });
+  r.get("/lattice/highlights", (req, res) => {
+    const runIds = req.query.runIds ? String(req.query.runIds).split(",") : lattice.sessionStatus().runIds;
+    res.json({ highlights: lattice.highlights({ runIds, limit: req.query.limit }) });
+  });
+  r.get("/lattice/mission", (_req, res) => res.json({ mission: lattice.mission() }));
+  r.get("/lattice/session", (_req, res) => res.json(lattice.sessionStatus()));
+  r.post("/lattice/session", (req, res) => {       // e.g. {"minutes":10,"agents":["grok-main","edge-critic"]}
+    const { minutes, agents: names } = req.body || {};
+    if (minutes !== undefined && !(Number(minutes) >= 1 && Number(minutes) <= 60)) return res.status(400).json({ error: "minutes must be 1..60" });
+    if (names !== undefined && (!Array.isArray(names) || names.length < 2 || names.some(n => typeof n !== "string" || !getAgent(n))))
+      return res.status(400).json({ error: "agents must list at least 2 known agent ids" });
+    const out = lattice.startSession({ council, runAgent, tools: tools || [], getAgent, knowledge: teamKnowledge }, { minutes, agents: names });
+    res.status(out.error ? 409 : 202).json(out);
+  });
+  r.delete("/lattice/session", (_req, res) => res.json(lattice.stopSession()));
   r.post("/lattice/grow", async (req, res) => {   // one autonomous growth cycle now
     const names = req.body?.agents;
     if (names !== undefined && (!Array.isArray(names) || names.some(n => typeof n !== "string" || !getAgent(n))))

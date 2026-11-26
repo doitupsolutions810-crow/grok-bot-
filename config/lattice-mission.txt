@@ -1,0 +1,6 @@
+Continue even longer, more robust testing against even more edge cases, and fix along the way.
+Use the system for the owner: run the most advanced network-connected tooling you have, watch what happens, and keep testing and fixing the running system as it runs.
+Make sure users can create agents, name them and write custom instructions; test that and fix what breaks.
+Talk to each other in proper English, use your skills and tools, and use the dialogue queues to share what you learn.
+Every agent and spawned agent has its own node (its own Linux machine with terminal, services, network, resources, environment and MCP tools): use it to write and run code that solves your own problems.
+Follow each other's thinking, build on each other's discoveries, and keep growing. Record each genuinely new finding as a line starting with "EUREKA:".

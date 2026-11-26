@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
+import { dataPath } from "../paths.js";
 
-const db = new Database("/app/data/approvals.db");
+const db = new Database(dataPath("approvals.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS approvals (
   id INTEGER PRIMARY KEY, ts TEXT, agent TEXT, tool TEXT, args TEXT, status TEXT DEFAULT 'pending'
 )`);
@@ -15,10 +16,11 @@ export function needsReview(tool, args) {
 }
 
 export function createApproval(agent, tool, args) {
-  const { last_insert_rowid: id } = db.prepare(
+  // better-sqlite3 reports the new key as lastInsertRowid (a Number here)
+  const { lastInsertRowid } = db.prepare(
     "INSERT INTO approvals (ts, agent, tool, args) VALUES (datetime('now'),?,?,?)"
-  ).run(agent, tool, JSON.stringify(args));
-  return id;
+  ).run(agent, tool, JSON.stringify(args ?? {}));
+  return Number(lastInsertRowid);
 }
 export function pending() {
   return db.prepare("SELECT id, ts, agent, tool, args, status FROM approvals WHERE status='pending'").all();

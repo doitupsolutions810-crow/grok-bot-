@@ -7,7 +7,7 @@ import {
 } from "./agents/index.js";
 import { remember, memoryContext } from "./memory/store.js";
 import { search, ingest } from "./rag/index.js";
-import { addTask, listTasks, runTask, setTaskRunner } from "./tasks/scheduler.js";
+import { addTask, listTasks, runTask, setTaskRunner, deleteTask } from "./tasks/scheduler.js";
 import { issueToken, authRequired } from "./middleware/auth.js";
 import { agentsCrud } from "./middleware/agents-crud.js";
 import { pending, decide, takeHeld } from "./middleware/approvals.js";
@@ -73,9 +73,9 @@ export function makeRouter({ tools, docker }) {
   agentsCrud(r);
   r.get("/bots", (req, res) => res.json(listBots()));
   r.post("/bots", (req, res) => {
-    const { name, job, tools: botTools, model, mode, review, emoji, trigger } = req.body || {};
-    if (!name || !job) return res.status(400).json({ error: "name and job required" });
-    const bot = createBot({ name, job, tools: botTools, model, mode, review, emoji, trigger });
+    const { name, job, instructions, tools: botTools, model, mode, review, emoji, trigger } = req.body || {};
+    if (typeof name !== "string" || !name.trim() || (!job && !instructions)) return res.status(400).json({ error: "name and a job or instructions required" });
+    const bot = createBot({ name: name.trim().slice(0, 64), job, instructions: typeof instructions === "string" ? instructions.slice(0, 8000) : "", tools: botTools, model, mode, review, emoji, trigger });
     res.status(201).json({ ok: true, bot });
   });
 
@@ -83,7 +83,8 @@ export function makeRouter({ tools, docker }) {
   r.get("/approvals", (req, res) => res.json(pending()));
   r.post("/approvals/:id/decision", async (req, res) => {
     const id = Number(req.params.id);
-    const approve = !!(req.body || {}).approve;
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "bad approval id" });
+    const approve = (req.body || {}).approve === true;
     const held = takeHeld(id);          // claim exactly once → idempotent approve
     decide(id, approve);
     if (!approve || !held) return res.json({ ok: true, approved: approve, resumed: false });
@@ -110,7 +111,7 @@ export function makeRouter({ tools, docker }) {
   // ---------- chat (all modes) ----------
   r.post("/chat", async (req, res) => {
     const { agentId = "grok-main", message, session = "default", mode = "chat", rounds, firstAnswer } = req.body || {};
-    if (!message) return res.status(400).json({ error: "message required" });
+    if (typeof message !== "string" || !message.trim()) return res.status(400).json({ error: "message required" });
     const agent = agentId === "team" ? dispatch(message) : find(agentId);
     const ctx = buildContext(session, message);
 
@@ -140,7 +141,7 @@ export function makeRouter({ tools, docker }) {
   // Real streaming: chat pipes Ollama tokens; squad/deep stream {note} progress
   r.post("/chat/stream", async (req, res) => {
     const { agentId = "grok-main", message, session = "default", mode = "chat", rounds, firstAnswer } = req.body || {};
-    if (!message) return res.status(400).json({ error: "message required" });
+    if (typeof message !== "string" || !message.trim()) return res.status(400).json({ error: "message required" });
     const agent = agentId === "team" ? dispatch(message) : find(agentId);
     const ctx = buildContext(session, message);
     sseStart(res);
@@ -196,10 +197,22 @@ export function makeRouter({ tools, docker }) {
   r.get("/voice/tts", async (req, res) =>
     res.json(await speak(String(req.query.text || "").slice(0, 1000))));
   r.get("/tasks", (req, res) => res.json(listTasks()));
-  r.post("/tasks", (req, res) => res.json({ id: addTask(req.body) }));
-  r.post("/tasks/:id/run", async (req, res) => { await runTask(+req.params.id); res.json({ ok: true }); });
-  r.get("/images/:file", (req, res) =>
-    res.type("image/png").send(readFileSync(`/output/${req.params.file}`)));
+  r.post("/tasks", (req, res) => {
+    try { res.status(201).json({ id: addTask(req.body || {}) }); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  r.post("/tasks/:id/run", async (req, res) => {
+    const id = await runTask(+req.params.id);
+    if (id == null) return res.status(404).json({ error: "no such task" });
+    res.json({ ok: true });
+  });
+  r.delete("/tasks/:id", (req, res) => res.status(deleteTask(+req.params.id) ? 200 : 404).json({ ok: true }));
+  r.get("/images/:file", (req, res) => {
+    const file = String(req.params.file);
+    if (!/^[\w.-]+\.png$/.test(file) || file.includes("..")) return res.status(400).json({ error: "bad file name" });
+    try { res.type("image/png").send(readFileSync(`/output/${file}`)); }
+    catch { res.status(404).json({ error: "no such image" }); }
+  });
 
   return r;
 }

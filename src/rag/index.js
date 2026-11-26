@@ -1,8 +1,9 @@
 import Database from "better-sqlite3";
+import { dataPath } from "../paths.js";
 import { readFileSync } from "node:fs";
 
 const OLLAMA = process.env.OLLAMA_URL || "http://ollama:11434";
-const db = new Database("/app/data/rag.db");
+const db = new Database(dataPath("rag.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS chunks (
   id INTEGER PRIMARY KEY, source TEXT, chunk TEXT, embedding BLOB
 )`);

@@ -101,7 +101,7 @@
 <section id="team" class="tab">
   <div class="row" style="margin-bottom:14px">
     <input type="text" id="teamFilter" placeholder="Filter teammates by name, job, or tool…" style="max-width:340px">
-    <button class="btn" onclick="editBot(null)">＋ New teammate</button>
+    <button class="btn" onclick="editBot(null)">＋ New agent</button>
   </div>
   <div class="grid" id="bots"></div>
 </section>
@@ -129,8 +129,11 @@
 
 <dialog id="editDlg">
   <h3 id="dlgTitle" style="margin-bottom:6px">Teammate</h3>
-  <label>Name <input type="text" id="f_name"></label>
-  <label>Job <textarea id="f_job" style="min-height:64px"></textarea></label>
+  <label>Name <input type="text" id="f_name" maxlength="64" placeholder="e.g. Release Captain"></label>
+  <label>Job <span style="color:var(--dim);font-size:12px">(one line — used to route tasks to this agent)</span>
+    <textarea id="f_job" style="min-height:48px" maxlength="1000"></textarea></label>
+  <label>Custom instructions <span style="color:var(--dim);font-size:12px">(how this agent should think, write, and behave — up to 8000 characters)</span>
+    <textarea id="f_instructions" style="min-height:120px" maxlength="8000" placeholder="e.g. Always cite sources. Answer in bullet points. Never run destructive commands."></textarea></label>
   <div class="row">
     <div style="flex:1"><label>Emoji <input type="text" id="f_emoji"></label></div>
     <div style="flex:2"><label>Mode <select id="f_mode"></select></div>
@@ -146,6 +149,9 @@
 
 <script>
 const $ = id => document.getElementById(id);
+// Agent names, instructions, tool args and ledger rows are user/LLM-controlled:
+// escape everything that goes through innerHTML (stored-XSS guard).
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const api = (p, o) => fetch("/api" + p, o).then(r => r.json());
 
 // ---------- tabs ----------
@@ -190,8 +196,8 @@ async function loadAgentsForChat() {
   try {
     agentsData = await api("/agents");
     const opts = [
-      ...agentsData.agents.map(a => `<option value="${a.id}">${a.id === "grok-main" ? "🎯 " : ""}${a.name}</option>`),
-      ...agentsData.bots.map(b => `<option value="${b.id}">${b.emoji || "🤖"} ${b.name}</option>`),
+      ...agentsData.agents.map(a => `<option value="${esc(a.id)}">${a.id === "grok-main" ? "🎯 " : ""}${esc(a.name)}</option>`),
+      ...agentsData.bots.map(b => `<option value="${esc(b.id)}">${esc(b.emoji || "🤖")} ${esc(b.name)}</option>`),
       `<option value="team">🧠 Team (chief of staff routes it)</option>`
     ];
     const sel = $("agentSel"); const cur = sel.value;
@@ -264,49 +270,55 @@ async function loadTeam() {
 function renderBots() {
   const q = $("teamFilter").value.toLowerCase();
   const list = allBots.filter(b =>
-    !q || (b.name + " " + (b.job || "") + " " + (b.systemPrompt || "")).toLowerCase().includes(q));
+    !q || (b.name + " " + (b.job || "") + " " + (b.instructions || "") + " " + (b.systemPrompt || "")).toLowerCase().includes(q));
   $("bots").innerHTML = list.map(b => `
     <div class="bot">
-      <h3>${b.emoji || "🎯"} ${b.name} ${b.core ? '<span class="tag">core</span>' : ""}
+      <h3>${esc(b.emoji || "🎯")} ${esc(b.name)} ${b.core ? '<span class="tag">core</span>' : ""}
         ${b.review ? '<span class="tag">Auto Review</span>' : ""}
         <span style="margin-left:auto"></span>
         ${b.core ? "" : `<button class="btn ghost small" onclick='editBot(${JSON.stringify(b.id)})'>✎</button>`}
       </h3>
-      <div class="job">${b.job || b.systemPrompt || ""}</div>
-      <div>${(b.tools || []).map(t => `<span class="tag">${t}</span>`).join("")}</div>
+      <div class="job">${esc(b.job || b.systemPrompt || "")}</div>
+      ${b.instructions ? `<div class="job" title="${esc(b.instructions)}">📝 ${esc(b.instructions.slice(0, 140))}${b.instructions.length > 140 ? "…" : ""}</div>` : ""}
+      <div>${(b.tools || []).map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     </div>`).join("") || `<div style="color:var(--dim)">No teammates match the filter.</div>`;
 }
 let editingId = null;
 function editBot(id) {
   editingId = id;
   const b = id ? allBots.find(x => x.id === id) : null;
-  $("dlgTitle").textContent = b ? `Edit ${b.name}` : "New teammate";
+  $("dlgTitle").textContent = b ? `Edit ${b.name}` : "New agent";
   $("f_name").value = b ? b.name : "";
-  $("f_job").value = b ? b.job : "";
+  $("f_job").value = b ? (b.job || "") : "";
+  $("f_instructions").value = b ? (b.instructions || "") : "";
   $("f_emoji").value = b ? (b.emoji || "🤖") : "🤖";
   $("f_mode").value = b ? (b.mode || "chat") : "chat";
   $("f_review").checked = b ? !!b.review : false;
   $("f_tools").innerHTML = (agentsData.allTools || []).filter(t => t !== "*")
-    .map(t => `<label><input type="checkbox" value="${t}" ${b && (b.tools || []).includes(t) ? "checked" : ""}> ${t}</label>`).join("");
+    .map(t => `<label><input type="checkbox" value="${esc(t)}" ${b && (b.tools || []).includes(t) ? "checked" : ""}> ${esc(t)}</label>`).join("");
   $("f_del").style.display = b ? "" : "none";
   $("editDlg").showModal();
 }
 $("f_save").onclick = async () => {
   const body = {
-    name: $("f_name").value.trim(), job: $("f_job").value.trim(), emoji: $("f_emoji").value.trim(),
+    name: $("f_name").value.trim(), job: $("f_job").value.trim(),
+    instructions: $("f_instructions").value.trim(), emoji: $("f_emoji").value.trim(),
     mode: $("f_mode").value, review: $("f_review").checked,
-    tools: [...document.querySelectorAll("#f_tools input:checked")].map(x => x.value),
-    model: (agentsData.models || [])[0]
+    tools: [...document.querySelectorAll("#f_tools input:checked")].map(x => x.value)
   };
+  // only set a model on create; editing never silently swaps an agent's model
+  if (!editingId && (agentsData.models || []).length) body.model = agentsData.models[0];
+  if (!body.name) return alert("Give your agent a name.");
+  if (!body.job && !body.instructions) return alert("Add a job or custom instructions.");
   const res = editingId
     ? await fetch(`/api/agents/${editingId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
     : await fetch("/api/agents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const j = await res.json();
-  if (!j.ok && !j.id) return alert((j.errors || [j.error]).join("\n"));
+  const j = await res.json().catch(() => ({ errors: [`HTTP ${res.status}`] }));
+  if (!res.ok || (!j.ok && !j.id)) return alert((j.errors || [j.error || `HTTP ${res.status}`]).join("\n"));
   $("editDlg").close(); loadTeam(); loadAgentsForChat();
 };
 $("f_del").onclick = async () => {
-  if (!confirm("Delete this teammate?")) return;
+  if (!confirm("Delete this agent?")) return;
   await fetch(`/api/agents/${editingId}`, { method: "DELETE" });
   $("editDlg").close(); loadTeam(); loadAgentsForChat();
 };
@@ -360,8 +372,8 @@ async function loadLedger() {
     <span style="color:var(--dim)">${l.entries.length} recent entries</span></div>
     <div style="color:var(--dim);font-size:12px;margin-top:6px">Every tool call is chained: hash(entry) covers hash(prev). Editing any row breaks the chain.</div>`;
   $("ledgerTable").innerHTML = `<tr><th>when</th><th>agent</th><th>tool</th><th>ms</th><th>ok</th></tr>` +
-    l.entries.slice(0, 60).map(e => `<tr><td>${e.ts || ""}</td><td>${e.agent}</td><td>${e.tool}</td><td>${e.duration_ms}</td>
-      <td>${e.ok ? "✅" : "❌ " + (e.error || "")}</td></tr>`).join("");
+    l.entries.slice(0, 60).map(e => `<tr><td>${esc(e.ts)}</td><td>${esc(e.agent)}</td><td>${esc(e.tool)}</td><td>${esc(e.duration_ms)}</td>
+      <td>${e.ok ? "✅" : "❌ " + esc(e.error)}</td></tr>`).join("");
 }
 
 // ---------- approvals ----------
@@ -370,8 +382,8 @@ async function loadApprovals() {
   $("approvalList").innerHTML = list.length ? list.map(a => {
     const args = (() => { try { return JSON.parse(a.args); } catch { return a.args; } })();
     return `<div class="card">
-      <div class="row"><b>#${a.id} · ${a.agent} → ${a.tool}</b><span class="badge warn">pending</span></div>
-      <pre style="background:var(--panel2);padding:10px;border-radius:8px;margin:10px 0;overflow-x:auto;font-size:12px">${JSON.stringify(args, null, 2)}</pre>
+      <div class="row"><b>#${Number(a.id)} · ${esc(a.agent)} → ${esc(a.tool)}</b><span class="badge warn">pending</span></div>
+      <pre style="background:var(--panel2);padding:10px;border-radius:8px;margin:10px 0;overflow-x:auto;font-size:12px">${esc(JSON.stringify(args, null, 2))}</pre>
       <div class="row">
         <button class="btn small" onclick="decideApproval(${a.id}, true)">Approve & resume</button>
         <button class="btn ghost small" style="color:var(--err)" onclick="decideApproval(${a.id}, false)">Deny</button>

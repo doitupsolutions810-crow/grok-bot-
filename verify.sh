@@ -56,6 +56,12 @@ fi
 
 # Gate expensive operations on cheap prerequisites so a missing Docker daemon or
 # invalid Compose file fails immediately instead of wasting a 60-minute wait.
+# Cheapest gate first: the offline edge-case suite needs only Node 22 + npm.
+if command -v npm >/dev/null 2>&1; then
+  step "offline edge-case suite (npm test)" sh -c 'npm install --no-audit --no-fund >/dev/null && npm test' || true
+else
+  skip_step "offline edge-case suite" "npm not installed on this host (it also runs inside the container below)"
+fi
 if [ "$FAILED" -eq 0 ]; then
   step "Docker CLI, Compose v2, and daemon access" sh -c 'command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1' || true
 fi
@@ -71,6 +77,7 @@ else
   skip_step "boot self-test gate" "a prerequisite or Compose startup step failed"
 fi
 if [ "$FAILED" -eq 0 ]; then
+  step "offline edge-case suite inside the container" docker compose exec -T -e DATA_DIR=/tmp/grokbot-unit grok-bot node --test tests/unit/edge.test.mjs || true
   step "live agent tests (real inference, Docker terminal, browser, squad)" docker compose exec -T grok-bot node tests/live.test.js || true
 else
   skip_step "live agent tests" "the boot gate did not pass"

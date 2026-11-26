@@ -16,7 +16,7 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     spawnDepth: opts.spawnDepth ?? 0
   };
   const messages = resume || [
-    { role: "system", content: agent.systemPrompt },
+    { role: "system", content: agent.systemPrompt || "You are a helpful AI teammate." },
     { role: "user", content: userMessage }
   ];
   // tools: ["*"] grants the full live toolset
@@ -25,7 +25,7 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     : tools.filter(t => agent.tools?.includes(t.name) || agent.tools?.includes(t.name.split(".")[0]));
 
   for (let step = 0; step < maxSteps; step++) {
-    const reply = await chatRoute(messages, available, { mode: agent.mode || "chat" });
+    const reply = await chatRoute(messages, available, { mode: agent.mode || "chat", model: agent.model || "" });
 
     if (!reply.tool_calls?.length) return reply.content;   // final answer
 

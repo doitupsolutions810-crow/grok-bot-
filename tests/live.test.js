@@ -49,6 +49,13 @@ const results = [
       body: JSON.stringify({ job: "verify live tests and mark flaky ones" })
     }).then(j);
     if (!patched.ok) throw new Error(JSON.stringify(patched));
+    const instr = await fetch(`${BASE}/api/agents/${created.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ instructions: "Always end with the word VERIFIED." })
+    }).then(j);
+    if (!instr.ok) throw new Error(JSON.stringify(instr));
+    const got = await fetch(`${BASE}/api/agents/${created.id}`).then(j);
+    if (!/VERIFIED/.test(got.effectivePrompt || "")) throw new Error("custom instructions missing from effective prompt");
     const deleted = await fetch(`${BASE}/api/agents/${created.id}`, { method: "DELETE" }).then(j);
     if (!deleted.ok) throw new Error(JSON.stringify(deleted));
     return `created → patched → deleted ${created.id}`;

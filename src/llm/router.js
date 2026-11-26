@@ -20,8 +20,10 @@ function client(model) {
 // Non-stream calls return the MESSAGE (choices[0].message) directly — that's
 // what the agent loop reads (.content, .tool_calls). Streaming returns the raw
 // stream for piping.
-export async function chatRoute(messages, tools = [], { mode = "chat", stream = false } = {}) {
-  const order = mode === "chat" ? CHAIN.slice().reverse().concat(CHAIN[0]) : CHAIN; // chat = fast-first; heavy = big-first
+export async function chatRoute(messages, tools = [], { mode = "chat", stream = false, model: preferred = "" } = {}) {
+  const base = mode === "chat" ? CHAIN.slice().reverse() : CHAIN.slice(); // chat = fast-first; heavy = big-first
+  // An agent's own model goes first; the chain stays as fallback. De-duplicated.
+  const order = [...new Set([preferred, ...base].filter(Boolean))];
   let lastErr;
   for (const model of order) {
     try {

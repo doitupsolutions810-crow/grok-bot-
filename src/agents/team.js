@@ -3,30 +3,20 @@
 // config/agents.json through the registry so console edits are hot everywhere.
 
 import Database from "better-sqlite3";
+import { dataPath } from "../paths.js";
 import { runAgent } from "./runtime.js";
-import { listBots, upsertBot, findAgent } from "./registry.js";
+import { listBots, upsertBot, getAgent, toAgent } from "./registry.js";
+export { toAgent };
 
-const db = new Database("/app/data/bots.db");
+const db = new Database(dataPath("bots.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS mailbox (
   id INTEGER PRIMARY KEY, ts TEXT, from_bot TEXT, to_bot TEXT, content TEXT, done INTEGER DEFAULT 0
 )`);
 
-export function toAgent(b) {
-  return {
-    id: b.id,
-    name: b.name || b.id,
-    systemPrompt: `You are ${b.name || b.id}, an always-on AI teammate. Your job: ${b.job || "help the team"}. Work end-to-end with your tools (shared computer: files, browser sessions, logins). Return only finished work; ask for approval only when a decision is needed.`,
-    tools: b.tools?.length ? b.tools : ["terminal", "browser", "web.fetch"],
-    model: b.model,
-    mode: b.mode || "chat",
-    review: !!b.review
-  };
-}
-
-export function createBot({ name, job, tools, model, mode, review, emoji, trigger }) {
+export function createBot({ name, job, instructions, tools, model, mode, review, emoji, trigger }) {
   const id = String(name || "bot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "bot";
   const bot = {
-    id, name, job: job || "", model: model || "", mode: mode || "chat",
+    id, name, job: job || "", instructions: instructions || "", model: model || "", mode: mode || "chat",
     review: !!review, emoji: emoji || "🤖", trigger: trigger || "",
     tools: tools?.length ? tools : ["terminal", "browser", "web.fetch"]
   };
@@ -68,10 +58,10 @@ export function teamAskTool(getTools) {
       required: ["bot", "task"]
     },
     async run({ bot, task }, ctx) {
-      const b = findAgent(bot);
-      if (!b || (b.id === "grok-main" && bot !== "grok-main")) return { error: `no teammate named ${bot}` };
-      sendMail(ctx?.agent || "caller", b.id, task);
-      const answer = await runAgent(toAgent(b), task, getTools(), {
+      const b = getAgent(bot);
+      if (!b) return { error: `no teammate named ${bot}` };
+      sendMail(ctx?.agent || "caller", b.id, String(task ?? ""));
+      const answer = await runAgent(b, String(task ?? ""), getTools(), {
         runId: ctx?.run?.runId, agentName: b.id, spawnDepth: ctx?.spawnDepth
       });
       return { delegated: true, teammate: b.id, answer };

@@ -6,7 +6,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-export const RUNS_DIR = process.env.RUNS_DIR || "/app/data/runs";
+export const RUNS_DIR = process.env.RUNS_DIR || `${process.env.DATA_DIR || "/app/data"}/runs`;
 try { mkdirSync(RUNS_DIR, { recursive: true }); } catch {}
 
 export function newRunId() {

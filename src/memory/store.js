@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
+import { dataPath } from "../paths.js";
 import { LLM } from "../llm/provider.js";
 
-const db = new Database("/app/data/memory.db");
+const db = new Database(dataPath("memory.db"));
 const llm = new LLM();
 
 db.exec(`

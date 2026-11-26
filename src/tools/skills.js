@@ -3,10 +3,11 @@
 // exposed to agents as skill.list / skill.load.
 
 import Database from "better-sqlite3";
+import { dataPath } from "../paths.js";
 import { chromium } from "playwright";
 import { readFileSync, readdirSync } from "node:fs";
 
-const db = new Database("/app/data/skills.db");
+const db = new Database(dataPath("skills.db"));
 db.exec(`CREATE TABLE IF NOT EXISTS skills (
   id INTEGER PRIMARY KEY, name TEXT UNIQUE, description TEXT, steps TEXT, created TEXT
 )`);

@@ -64,6 +64,7 @@ const NOT_A_FINDING = [
   // "No relevant edge cases have been recorded yet", "the board is empty": a status, not a finding
   /^(there\s+(are|is)\s+)?(no|nothing)\b[^.]{0,80}\b(recorded|found|yet|available|logged|so far)\b/i,
   /\b(knowledge board|board)\b[^.]{0,40}\b(is|was)\s+(currently\s+)?empty\b/i,
+  /^the team (has|have)\s+(agreed|decided|aligned|discussed)\b/i,   // the meeting's status, not a finding
   // "We should also explore the edge case where…": a proposal, not something found
   /^(we|the team|you)\s+(should|could|might|must|need to)\s+(also\s+)?(explore|test|look|investigate|try|check|consider|examine|run|start|focus|prioriti[sz]e|remember)\b/i,
 ];
@@ -90,8 +91,24 @@ export function similar(a, b) {
   return small >= 6 ? Math.max(jac, n / small) : jac;
 }
 
+// The finding itself: leading sentences up to the first plan, question or status line, without a
+// trailing "(grok-engineer)" credit the model invented. Seen live: whole paragraphs with
+// "Let's start by…" and a second EUREKA line landed on the board as one finding.
+export function findingOnly(text) {
+  const t = String(text ?? "").replace(/^\s*EUREKA:\s*/i, "").split(/\s*\bEUREKA:\s*/i)[0];
+  const sentences = t.trim().split(/(?<=[.!?])\s+/);      // "2.5.1" and "e.g." stay inside a sentence
+  const kept = [];
+  for (const raw of sentences) {
+    const sent = raw.replace(/\s*\((?:[a-z0-9-]+|grok[^)]*)\)\s*$/i, "").trim();
+    if (!sent || /^\([^)]{1,40}\)$/.test(sent)) continue;   // a bare "(grok-engineer)" credit
+    if (!isFinding(sent)) break;          // first plan/question/status sentence ends the finding
+    kept.push(sent);
+  }
+  return kept.join(" ").trim();
+}
+
 export function addKnowledge(agent, text, runId = "") {
-  const t = clean(text, 1000);
+  const t = clean(findingOnly(text), 1000);
   if (!t || !isFinding(t)) return null;
   // the same insight twice is one insight, and so is the same insight reworded
   if (db.prepare("SELECT 1 FROM knowledge WHERE lower(text)=lower(?)").get(t)) return null;

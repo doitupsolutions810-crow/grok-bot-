@@ -2051,3 +2051,52 @@ test("netguard: placeholder hosts are refused with a plain hint, before any DNS 
   if (saved === undefined) delete process.env.WEB_ALLOW_PRIVATE; else process.env.WEB_ALLOW_PRIVATE = saved;
   for (const u of ["https://examples.com/", "https://mytest.dev/"]) await assertPublicUrl(u).catch(e => assert.doesNotMatch(e.message, /placeholder/, u));
 });
+
+// ================= round 35: live session 11:30 EST — killed model runner, wrong error, paragraph eurekas =================
+test("router: a killed model runner is retried; the error reported is the real model's, not a fallback's 404", async () => {
+  let calls = 0;
+  const srv = http.createServer((req, res) => { let b = ""; req.on("data", d => b += d); req.on("end", () => {
+    const model = JSON.parse(b).model; calls++;
+    if (model !== "flaky-r35:3b") { res.writeHead(404, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: `model '${model}' not found` } })); }
+    if (calls <= 1) { res.writeHead(500, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "llama-server process has terminated: signal: killed" } })); }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "back up" } }] }));
+  }); });
+  await new Promise(r => srv.listen(0, r)); srv.unref();
+  const saved = { u: process.env.OLLAMA_URL, ms: process.env.MODEL_RETRY_MS };
+  process.env.OLLAMA_URL = `http://127.0.0.1:${srv.address().port}`; process.env.MODEL_RETRY_MS = "10";
+  const R = await import(`../../src/llm/router.js?r35=${Date.now()}`);
+  const msg = await R.chatRoute([{ role: "user", content: "hi" }], [], { model: "flaky-r35:3b" });
+  assert.equal(msg.content, "back up", "retried after the runner was killed");
+  assert.equal(R.transient({ status: 500, message: "llama-server process has terminated: signal: killed" }), true);
+  assert.equal(R.transient({ status: 404, message: "model 'x' not found" }), false);
+  assert.equal(R.transient({ status: 400, message: "bad request" }), false);
+  assert.equal(R.transient({ message: "Connection error." }), true);
+  // every model fails: the error names the model that exists, not the last fallback's 404
+  calls = -100;
+  const srv2 = http.createServer((req, res) => { let b = ""; req.on("data", d => b += d); req.on("end", () => {
+    const model = JSON.parse(b).model;
+    res.writeHead(model === "real-r35:3b" ? 500 : 404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: { message: model === "real-r35:3b" ? "llama-server process has terminated: signal: killed" : `model '${model}' not found` } }));
+  }); });
+  await new Promise(r => srv2.listen(0, r)); srv2.unref();
+  process.env.OLLAMA_URL = `http://127.0.0.1:${srv2.address().port}`;
+  const R2 = await import(`../../src/llm/router.js?r35b=${Date.now()}`);
+  await assert.rejects(R2.chatRoute([{ role: "user", content: "hi" }], [], { model: "real-r35:3b" }), /terminated/);
+  if (saved.u === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = saved.u;
+  if (saved.ms === undefined) delete process.env.MODEL_RETRY_MS; else process.env.MODEL_RETRY_MS = saved.ms;
+  srv.close(); srv2.close();
+});
+
+test("eureka board: only the finding lands, not the plan, the second EUREKA, or an invented credit", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  // verbatim from the live session (grok-engineer, 16:33:46 UTC)
+  const live = "Every instance of the llama-server process seems to be terminating unexpectedly. Let's start by running some diagnostics on our own nodes using the terminal to check for error messages or patterns. Additionally, we can use mcp.remote to access any public MCP servers. EUREKA: Run diagnostics on our own nodes.";
+  assert.equal(D.findingOnly(live), "Every instance of the llama-server process seems to be terminating unexpectedly.");
+  assert.equal(D.findingOnly("The existing agent can be instructed using a simple command, verifying the ability to create and instruct agents. (grok-engineer)"),
+    "The existing agent can be instructed using a simple command, verifying the ability to create and instruct agents.");
+  assert.equal(D.findingOnly("The team has agreed on a clear mission to continue robust testing and fixing."), "", "meeting status");
+  assert.equal(D.findingOnly("Let's test it. The router drops tool calls."), "", "a plan first means no finding");
+  assert.equal(D.findingOnly("PATCH races: the second write wins. GET shows the second name. Should we lock?"), "PATCH races: the second write wins. GET shows the second name.");
+  assert.equal(D.findingOnly("Version 2.5.1 of the parser crashes on empty input."), "Version 2.5.1 of the parser crashes on empty input.");
+});

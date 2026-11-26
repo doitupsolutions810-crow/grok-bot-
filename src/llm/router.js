@@ -19,6 +19,15 @@ export const _missing = missing;
 const isMissing = m => { const t = missing.get(m); if (t && Date.now() - t < MISSING_MS) return true; missing.delete(m); return false; };
 const notFound = e => e?.status === 404 || /model .{0,80}not found|404/i.test(String(e?.message));
 
+const RETRIES = Math.max(0, Number(process.env.MODEL_TRANSIENT_RETRIES ?? 2) || 0);
+const RETRY_MS = Math.max(0, Number(process.env.MODEL_RETRY_MS ?? 2000));
+export const transient = e => {
+  const st = Number(e?.status);
+  if (st === 404 || (st >= 400 && st < 500 && st !== 408 && st !== 429)) return false;
+  return st >= 500 || st === 408 || st === 429 ||
+    /terminated|signal: killed|ECONNRESET|ECONNREFUSED|socket hang up|EPIPE|timed? ?out|Connection error/i.test(String(e?.message));
+};
+
 const clients = {};
 function client(model) {
   clients[model] ??= new OpenAI({
@@ -37,8 +46,9 @@ export async function chatRoute(messages, tools = [], { mode = "chat", stream = 
   const all = [...new Set([preferred, ...base].filter(Boolean))];
   const order = all.filter(m => !isMissing(m));
   if (!order.length) order.push(...all);   // everything marked missing: try again rather than fail blind
-  let lastErr;
+  let lastErr, realErr;
   for (const model of order) {
+   for (let attempt = 0; ; attempt++) {
     try {
       const params = { model, messages, stream, temperature: mode === "chat" ? 0.4 : 0.2 };
       if (tools.length) params.tools = tools.map(t => ({
@@ -50,7 +60,21 @@ export async function chatRoute(messages, tools = [], { mode = "chat", stream = 
       // an empty/garbled completion is a failure of this model — try the next one
       if (!msg) throw new Error("empty completion (no choices)");
       return msg;
-    } catch (e) { lastErr = e; if (notFound(e)) missing.set(model, Date.now()); console.warn(`[llm-router] ${model} failed (${e.message}), falling back`); }
+    } catch (e) {
+      lastErr = e;
+      if (notFound(e)) missing.set(model, Date.now()); else realErr ??= e;
+      // the backend's model runner died (OOM kill, crash) or the connection dropped: Ollama
+      // restarts the runner on the next request, so retry this model before moving on
+      if (!stream && attempt < RETRIES && transient(e)) {
+        console.warn(`[llm-router] ${model} transient failure (${e.message}), retry ${attempt + 1}/${RETRIES}`);
+        await new Promise(r => setTimeout(r, RETRY_MS * (attempt + 1)));
+        continue;
+      }
+      console.warn(`[llm-router] ${model} failed (${e.message}), falling back`);
+    }
+    break;
+   }
   }
-  throw lastErr || new Error("no models configured");
+  // report the failure that matters: a model that exists and broke, not the last fallback's 404
+  throw realErr || lastErr || new Error("no models configured");
 }

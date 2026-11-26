@@ -166,7 +166,15 @@ function finish(env, reason) {
 }
 
 export function start(id) {
-  if (!deps || loops.has(id)) return false;
+  if (!deps) return false;
+  const cur = loops.get(id);
+  if (cur) {
+    // paused and resumed while the old loop is still finishing its step: don't start a second
+    // loop beside it (two steps at once) and don't drop the resume (an orphaned "running" env);
+    // the old loop hands over to a fresh one as it exits.
+    if (cur.stop) { cur.stop = false; cur.restart = true; cur.wake?.(); return true; }
+    return false;
+  }
   const loop = { stop: false, wake: null };
   loops.set(id, loop);
   (async () => {
@@ -179,7 +187,10 @@ export function start(id) {
       }
     } catch (e) {
       lattice.record("error", { agent: "research", runId: id, text: `research loop crashed: ${e.message}` });
-    } finally { loops.delete(id); }
+    } finally {
+      if (loops.get(id) === loop) loops.delete(id);      // never evict a newer loop
+      if (loop.restart && get(id)?.status === "running") start(id);
+    }
   })();
   return true;
 }

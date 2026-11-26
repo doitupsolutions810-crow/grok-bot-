@@ -1726,3 +1726,27 @@ test("live-test proof: a terminal call's real output is in the Lattice even when
   assert.match(src, /kind=tool_result&since=/); assert.doesNotMatch(src, /if \(!\/linux\/i\.test\(res\.answer\)\)/);
   replyQueue = [];
 });
+
+// ================= round 23: pause/resume flip-flop while a step is in flight =================
+test("research env: pause then resume mid-step neither orphans the env nor runs two steps at once", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  let inFlight = 0, maxInFlight = 0, steps = 0;
+  let mine = null;                                      // envs left "running" by earlier tests resume too; count only ours
+  R.init({ getAgent: id => ({ id }), tools: [], runAgent: async (_a, _b, _t, o) => {
+    if (o.envId !== mine) return "ok";
+    inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise(r => setTimeout(r, 40)); inFlight--; steps++; return "ok";
+  } });
+  const e = R.create({ goal: "Flip flop pause and resume quickly", agents: ["grok-main"], stepIntervalSec: 0, maxSteps: 6 });
+  mine = e.env.id;
+  await new Promise(r => setTimeout(r, 10));                 // a step is now in flight
+  for (let i = 0; i < 5; i++) { R.control(e.env.id, "pause"); R.control(e.env.id, "resume"); }
+  assert.equal([...R._loops.keys()].filter(k => k === e.env.id).length, 1, "exactly one loop owns the env");
+  assert.equal(R._loops.get(e.env.id).stop, false, "and it is not marked to stop");
+  const done = await waitFor(() => R.get(e.env.id)?.status === "done", 5000);
+  assert.ok(done, `env finished instead of being orphaned (status ${R.get(e.env.id).status}, step ${R.get(e.env.id).step})`);
+  assert.equal(maxInFlight, 1, "never two steps at once");
+  assert.equal(R.get(e.env.id).step, 6);
+  R._reset();
+});

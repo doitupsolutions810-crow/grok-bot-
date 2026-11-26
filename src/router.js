@@ -15,6 +15,7 @@ import { agentsCrud } from "./middleware/agents-crud.js";
 import { pending, decide, takeHeld, approvalStatus, needsReview } from "./middleware/approvals.js";
 import { resumeHeld } from "./agents/runtime.js";
 import { getAgent } from "./agents/registry.js";
+import * as nodes from "./agents/nodes.js";
 import { post as postDialogue, feed as dialogueFeed, knowledge as teamKnowledge, council, KINDS } from "./agents/dialogue.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
@@ -271,6 +272,22 @@ export function makeRouter({ tools, docker }) {
     if (unknown.length) return res.status(404).json({ error: `unknown agents: ${unknown.join(", ")}` });
     try { res.json(await council({ topic, agents: names, rounds, runAgent, tools: tools || [], getAgent })); }
     catch (e) { res.status(502).json({ error: e.message }); }
+  });
+  // ---------- agent nodes: one machine per agent ----------
+  r.get("/nodes", async (_req, res) => {
+    if (!nodes.enabled()) return res.json({ enabled: false, nodes: [] });
+    try { res.json({ enabled: true, nodes: await nodes.listNodes(docker) }); } catch (e) { res.status(502).json({ error: e.message }); }
+  });
+  r.post("/agents/:id/node", async (req, res) => {
+    const a = getAgent(req.params.id);
+    if (!a) return res.status(404).json({ error: "unknown agent" });
+    if (!nodes.enabled()) return res.status(409).json({ error: "agent nodes are disabled (set AGENT_NODES=true)" });
+    try { res.json(await nodes.ensureNode(docker, a)); } catch (e) { res.status(502).json({ error: e.message }); }
+  });
+  r.delete("/agents/:id/node", async (req, res) => {
+    if (!getAgent(req.params.id)) return res.status(404).json({ error: "unknown agent" });
+    if (!nodes.enabled()) return res.status(409).json({ error: "agent nodes are disabled (set AGENT_NODES=true)" });
+    try { res.json({ removed: await nodes.removeNode(docker, req.params.id) }); } catch (e) { res.status(502).json({ error: e.message }); }
   });
   r.get("/tools", (_req, res) => res.json((tools || []).map(t => ({ name: t.name, description: t.description || "", review: needsReview(t.name, {}) }))));
   r.get("/skills", (_req, res) => res.json({ recorded: listSkills().map(s => ({ name: s.name, description: s.description, steps: s.steps.length })), playbooks: loadPlaybooks().map(p => ({ name: p.name, description: p.description })) }));

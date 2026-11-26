@@ -60,6 +60,26 @@ jobs:
       - name: Live agent tests (real inference, docker exec, browser)
         run: docker compose exec -T grok-bot node tests/live.test.js
 
+      - name: Agent nodes (each agent's own container, terminal, services, limits)
+        timeout-minutes: 10
+        run: |
+          set -e
+          api() { curl -fsS -X POST "http://localhost:3000/api/$1" -H 'content-type: application/json' -d "$2"; }
+          api agents '{"name":"Node Prober","job":"node checks","resources":{"cpus":0.5,"memoryMb":256},"env":{"PROBE":"yes"}}' >/dev/null
+          api agents/node-prober/node '{}' | tee node.json
+          api tools/node.exec/invoke '{"command":"echo hello from $(hostname) PROBE=${PROBE:-unset}"}' | tee exec.json
+          grep -q '"ok":true' exec.json
+          api tools/node.service/invoke '{"action":"start","name":"ticker","command":"while true; do date; sleep 1; done"}' | tee svc.json
+          grep -q 'started' svc.json
+          api tools/node.service/invoke '{"action":"status","name":"ticker"}' | tee status.json
+          grep -q 'active (running)' status.json
+          api tools/node.info/invoke '{}' | tee info.json
+          curl -fsS http://localhost:3000/api/nodes | tee nodes.json
+          grep -q 'grok-node-node-prober' nodes.json
+          docker inspect grok-node-node-prober --format 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}} env={{json .Config.Env}}' | tee inspect.txt
+          grep -q 'mem=268435456' inspect.txt && grep -q 'PROBE=yes' inspect.txt
+          echo "::notice title=agent nodes::$(cat exec.json | head -c 300) | $(cat status.json | head -c 200)"
+
       - name: Team council (real agents talk, use their tools, record eurekas)
         timeout-minutes: 20
         run: |

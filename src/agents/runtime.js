@@ -46,7 +46,8 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
   return null;
 }
 
-const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load"]);
+const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load",
+  "node.exec", "node.service", "node.info", "node.mcp"]);   // every agent has its own node
 function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
 
 export async function runAgent(agent, userMessage, tools, opts = {}) {
@@ -54,7 +55,8 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
   const ctx = opts.ctx || {
     agent: opts.agentName || agent.id,
     run: { runId: opts.runId },
-    spawnDepth: opts.spawnDepth ?? 0
+    spawnDepth: opts.spawnDepth ?? 0,
+    nodeKey: opts.nodeKey || undefined        // spawned subagents run on their own ephemeral node
   };
   const messages = resume || [
     // every agent gets the plain-English team style + the newest team discoveries

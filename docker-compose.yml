@@ -34,6 +34,8 @@ services:
       MODELS_REQUIRED: ${MODELS_REQUIRED:-qwen2.5:3b,nomic-embed-text}
       BROWSER_WS: ws://browser:3000
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
+      AGENT_NODES: ${AGENT_NODES:-true}        # every agent gets its own container node (node.* tools)
+      AGENT_NODE_IMAGE: ${AGENT_NODE_IMAGE:-ubuntu:24.04}
       BOOT_STRICT: ${BOOT_STRICT:-true}
       # Governor (Avrone) — health-gated parallelism
       GROK_MAX_PARALLEL: ${GROK_MAX_PARALLEL:-4}

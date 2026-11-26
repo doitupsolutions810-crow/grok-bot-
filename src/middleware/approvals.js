@@ -11,7 +11,8 @@ const DANGER = process.env.REVIEW_PATTERNS
   : /rm\s+-rf|mkfs|dd\s+if=|curl[^|]*\|\s*(ba)?sh|docker\s+(rm|rmi|kill)|git\s+push\s+--force|shutdown|reboot/i;
 
 export function needsReview(tool, args) {
-  if (tool === "terminal" && DANGER.test(String(args?.command ?? ""))) return true;
+  if ((tool === "terminal" || tool === "node.exec") && DANGER.test(String(args?.command ?? ""))) return true;
+  if (tool === "node.service" && DANGER.test(String(args?.command ?? ""))) return true;
   // posting publicly in the owner's name is always worth a human look
   if (tool === "x.post") return true;
   return ["imagegen", "x.search"].includes(tool) && process.env.REVIEW_SENSITIVE === "true";

@@ -1,3 +1,4 @@
+import { validateNodeConfig } from "../agents/nodes.js";
 // Agent CRUD API — users create, name, and instruct their own agents.
 // Writes go through the registry (single source of truth, atomic writes) and
 // hot-reload it, so a new agent is usable the moment the POST returns.
@@ -16,9 +17,9 @@ const MODES = ["chat", "think", "deepsearch", "squad", "deep"];
 const ALL_TOOLS = [
   "*", "terminal", "browser", "web.fetch", "x.search", "x.post", "imagegen",
   "rag.search", "team.ask", "team.spawn", "task.board", "skill.list", "skill.load",
-  "mcp.filesystem", "mcp.git", "voice.speak", "memory.recall"
+  "mcp.filesystem", "mcp.git", "voice.speak", "memory.recall", "node"
 ];
-const FIELDS = ["name", "job", "instructions", "model", "tools", "mode", "trigger", "emoji", "review"];
+const FIELDS = ["name", "job", "instructions", "model", "tools", "mode", "trigger", "emoji", "review", "resources", "env", "network", "mcp"];
 const LIMITS = { name: 64, job: 1000, instructions: 8000, emoji: 16 };
 const MAX_AGENTS = (() => { const n = Number(process.env.MAX_AGENTS); return Number.isFinite(n) && process.env.MAX_AGENTS !== "" && process.env.MAX_AGENTS != null ? Math.max(0, Math.floor(n)) : 200; })();
 
@@ -56,6 +57,7 @@ export function validate(a, { partial = false } = {}) {
   if (a.trigger !== undefined && a.trigger !== "" && (typeof a.trigger !== "string" || !/^@[\w-]{1,15}$/.test(a.trigger))) errs.push("trigger must look like @handle");
   if (a.emoji !== undefined && (typeof a.emoji !== "string" || a.emoji.length > LIMITS.emoji)) errs.push(`emoji must be a short string (≤${LIMITS.emoji} chars)`);
   if (a.review !== undefined && typeof a.review !== "boolean") errs.push("review must be true or false");
+  errs.push(...validateNodeConfig(a));   // the agent's own node: resources, env, network, MCP servers
   return errs;
 }
 
@@ -92,6 +94,9 @@ export function agentsCrud(r) {
       id, name: body.name, job: body.job || "", instructions: body.instructions || "",
       model: body.model || "", tools: body.tools?.length ? body.tools : ["terminal", "browser", "web.fetch"],
       mode: body.mode || "chat", trigger: body.trigger || "", review: !!body.review, emoji: body.emoji || "🤖",
+      // the agent's own node (all optional): resource limits, env vars, network, MCP servers
+      ...(body.resources ? { resources: body.resources } : {}), ...(body.env ? { env: body.env } : {}),
+      ...(body.network ? { network: body.network } : {}), ...(body.mcp ? { mcp: body.mcp } : {}),
       createdAt: new Date().toISOString()
     };
     db.bots.push(bot);

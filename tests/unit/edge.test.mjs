@@ -860,3 +860,99 @@ test("council: validates input, agents take turns reading the thread, eurekas la
   assert.equal((await api("POST", "/dialogue", { text: "" })).status, 400);
   assert.equal((await api("POST", "/dialogue", { text: "Great work, team." })).status, 201);
 });
+
+// ================= round 11: agent nodes (own machine per agent) =================
+function fakeDocker() {
+  const state = new Map(); const execs = [];
+  const docker = {
+    created: [], removed: [], execs,
+    getContainer(name) {
+      return {
+        inspect: async () => { if (!state.has(name)) { const e = new Error("no such container"); e.statusCode = 404; throw e; }
+          const s = state.get(name); return { State: { Running: s.running }, Config: { Image: s.spec.Image }, HostConfig: s.spec.HostConfig, NetworkSettings: { Networks: { bridge: { IPAddress: "172.17.0.9" } } } }; },
+        start: async () => { state.get(name).running = true; },
+        remove: async () => { if (!state.has(name)) { const e = new Error("gone"); e.statusCode = 404; throw e; } state.delete(name); docker.removed.push(name); },
+        exec: async (opts) => { execs.push({ name, cmd: opts.Cmd }); const { PassThrough } = await import("node:stream");
+          return { start: async () => { const s = new PassThrough(); setImmediate(() => { s.write(`ran on ${name}`); s.end(); }); return s; }, inspect: async () => ({ ExitCode: 0 }) }; },
+      };
+    },
+    createContainer: async (spec) => { await new Promise(r => setTimeout(r, 5)); if (state.has(spec.name)) { const e = new Error("conflict"); e.statusCode = 409; throw e; }
+      state.set(spec.name, { spec, running: false }); docker.created.push(spec); return docker.getContainer(spec.name); },
+    listContainers: async () => [...state.entries()].map(([n, s]) => ({ Names: ["/" + n], Labels: s.spec.Labels, State: s.running ? "running" : "created", Status: "Up", Image: s.spec.Image })),
+    modem: { demuxStream: (stream, out) => stream.on("data", d => out.write(d)) },
+  };
+  return docker;
+}
+
+test("nodes: per-agent node with its own limits/env/network; parallel calls create it once", async () => {
+  process.env.AGENT_NODES = "true";
+  const nodes = await import("../../src/agents/nodes.js");
+  const docker = fakeDocker();
+  const agent = { id: "net-scout", resources: { cpus: 0.5, memoryMb: 256, pids: 64 }, env: { REGION: "us" }, network: "none" };
+  const [a, b] = await Promise.all([nodes.ensureNode(docker, agent), nodes.ensureNode(docker, agent)]);
+  assert.equal(a.name, "grok-node-net-scout"); assert.equal(docker.created.length, 1);
+  const spec = docker.created[0];
+  assert.equal(spec.HostConfig.NanoCpus, 5e8); assert.equal(spec.HostConfig.Memory, 256 * 1048576);
+  assert.equal(spec.HostConfig.PidsLimit, 64); assert.equal(spec.HostConfig.NetworkMode, "none");
+  assert.ok(spec.Env.includes("REGION=us")); assert.ok(spec.HostConfig.SecurityOpt.includes("no-new-privileges"));
+  assert.equal((await nodes.ensureNode(docker, agent)).created, false);
+  assert.equal(nodes.nodeName("../../Etc PASSWD"), "grok-node-etc-passwd");
+});
+
+test("nodes: node.exec runs on the caller's OWN node; spawned key gets a separate node; disabled → clear error", async () => {
+  const nodes = await import("../../src/agents/nodes.js");
+  const docker = fakeDocker();
+  const [exec, svc, info] = nodes.nodeTools(() => docker, id => ({ id }));
+  const r1 = await exec.run({ command: "uname -a" }, { agent: "alpha" });
+  const r2 = await exec.run({ command: "uname -a" }, { agent: "alpha", nodeKey: "alpha-spawn1-xyz" });
+  assert.equal(r1.node, "grok-node-alpha"); assert.equal(r2.node, "grok-node-alpha-spawn1-xyz");
+  assert.match(r1.stdout, /ran on grok-node-alpha/);
+  assert.deepEqual(docker.execs[0].cmd.slice(0, 4), ["timeout", "-s", "KILL", "30"]);
+  assert.match((await exec.run({}, { agent: "alpha" })).error, /command required/);
+  assert.match((await svc.run({ action: "start", name: "../x", command: "y" }, { agent: "alpha" })).error, /name must be/);
+  assert.match((await svc.run({ action: "start", name: "web" }, { agent: "alpha" })).error, /needs a command/);
+  assert.match((await svc.run({ action: "explode", name: "web" }, { agent: "alpha" })).error, /action must be/);
+  assert.equal((await info.run({}, { agent: "alpha" })).ips[0], "172.17.0.9");
+  process.env.AGENT_NODES = "false";
+  assert.match((await exec.run({ command: "ls" }, { agent: "alpha" })).error, /disabled/);
+  process.env.AGENT_NODES = "true";
+});
+
+test("nodes: service manager script quotes commands and survives a single quote", async () => {
+  const { serviceScript } = await import("../../src/agents/nodes.js");
+  const s = serviceScript("start", "web", "python3 -m http.server 8080 --bind '0.0.0.0'");
+  assert.match(s, /printf '%s' 'python3 -m http.server 8080 --bind '\\''0.0.0.0'\\'''/);
+  assert.match(serviceScript("restart", "web"), /not running[\s\S]*no command saved/);
+  assert.equal(serviceScript("rm-rf", "web"), null);
+  // real shell check: the generated script is valid POSIX sh
+  const { execFileSync } = await import("node:child_process");
+  for (const a of ["start", "stop", "restart", "status", "logs", "list"]) execFileSync("sh", ["-n", "-c", serviceScript(a, "web", "echo it's alive")]);
+});
+
+test("nodes: agent API accepts node config, rejects bad resources/env/mcp; spawn cleans up its ephemeral node", async () => {
+  const bad = [
+    { resources: { cpus: 99 } }, { resources: { memoryMb: 1.5 } }, { env: { "bad-name": "x" } },
+    { env: { OK: 5 } }, { network: "host" }, { mcp: { "Bad Id": { command: "x" } } }, { mcp: { fs: { args: ["x"] } } },
+  ];
+  for (const extra of bad) assert.equal((await call("POST", "/agents", { name: `Node Bad ${Math.random()}`, job: "x", ...extra })).status, 400, JSON.stringify(extra));
+  const ok = await call("POST", "/agents", { name: "Node Owner", job: "net ops", resources: { cpus: 2, memoryMb: 2048 },
+    env: { LOG_LEVEL: "debug" }, network: "bridge", mcp: { fs: { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/root"] } } });
+  assert.equal(ok.status, 201); assert.equal(ok.body.agent.resources.cpus, 2); assert.ok(ok.body.agent.mcp.fs);
+  // node.* tools are granted even to an agent whose whitelist doesn't name them
+  replyQueue = [{ role: "assistant", content: "ok" }];
+  const { runAgent } = await import("../../src/agents/runtime.js");
+  await runAgent({ id: "w", tools: ["browser"] }, "hi", [{ name: "node.exec", run: async () => ({}) }, { name: "terminal", run: async () => ({}) }]);
+  assert.deepEqual(lastBodies.at(-1).tools.map(t => t.function.name), ["node.exec"]);
+  assert.equal(mods.approvals.needsReview("node.exec", { command: "rm -rf /" }), true);
+  // spawn: ephemeral node removed afterwards
+  const docker = fakeDocker();
+  const { spawnTool } = await import("../../src/tools/spawn.js");
+  replyQueue = [{ role: "assistant", content: null, tool_calls: [{ id: "n1", type: "function", function: { name: "node.exec", arguments: '{"command":"hostname"}' } }] }, { role: "assistant", content: "spawn done" }];
+  const nodes = await import("../../src/agents/nodes.js");
+  const tools = nodes.nodeTools(() => docker, id => ({ id }));
+  const sp = spawnTool(() => tools, () => docker);
+  const out = await sp.run({ task: "check hostname" }, { agent: "lead", run: {} });
+  assert.equal(out.answer, "spawn done");
+  assert.equal(docker.created.length, 1); assert.match(docker.created[0].name, /^grok-node-grok-main-spawn1-/);
+  assert.deepEqual(docker.removed, [docker.created[0].name]);
+});

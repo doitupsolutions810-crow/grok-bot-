@@ -4,8 +4,9 @@
 
 import { runAgent } from "../agents/runtime.js";
 import { findAgent } from "../agents/registry.js";
+import * as nodes from "../agents/nodes.js";
 
-export function spawnTool(getTools) {
+export function spawnTool(getTools, getDocker) {
   const raw = Number(process.env.GROK_MAX_SPAWN_DEPTH);
   // "0" must disable spawning (|| 2 used to turn it back into 2); cap runaway values.
   const MAX_DEPTH = Number.isFinite(raw) && process.env.GROK_MAX_SPAWN_DEPTH !== "" ? Math.min(Math.max(0, Math.floor(raw)), 8) : 2;
@@ -26,11 +27,19 @@ export function spawnTool(getTools) {
       const depth = Number.isFinite(d) && d > 0 ? Math.floor(d) : 0;
       if (depth >= MAX_DEPTH) return { error: `spawn depth limit (${MAX_DEPTH}) reached — handle this subtask yourself` };
       const agent = findAgent(agentId || "grok-main");
-      const answer = await runAgent(agent, task, getTools(), {
-        runId: ctx?.run?.runId,
-        agentName: agent.id,
-        spawnDepth: depth + 1
-      });
+      // each spawned subagent gets its own ephemeral node (removed when it finishes)
+      const nodeKey = nodes.enabled() ? `${agent.id}-spawn${depth + 1}-${Math.random().toString(36).slice(2, 8)}` : undefined;
+      let answer;
+      try {
+        answer = await runAgent(agent, task, getTools(), {
+          runId: ctx?.run?.runId,
+          agentName: agent.id,
+          spawnDepth: depth + 1,
+          nodeKey
+        });
+      } finally {
+        if (nodeKey && getDocker?.()) await nodes.removeNode(getDocker(), nodeKey).catch(() => {});
+      }
       return { spawned: true, depth: depth + 1, agent: agent.id, answer };
     }
   };

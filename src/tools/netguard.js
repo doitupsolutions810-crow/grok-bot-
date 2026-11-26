@@ -30,8 +30,11 @@ export async function assertPublicUrl(raw) {
   try { u = new URL(String(raw)); } catch { throw new Error("invalid url"); }
   if (!["http:", "https:"].includes(u.protocol)) throw new Error(`unsupported protocol ${u.protocol}`);
   if (u.username || u.password) throw new Error("credentials in URLs are not allowed");
-  if (process.env.WEB_ALLOW_PRIVATE === "true") return u;
   const host = u.hostname.replace(/^\[|\]$/g, "");
+  // small models invent placeholder hosts (example.com/edge_cases, mcp.example.com): say so plainly
+  if (/(^|\.)(example\.(com|org|net)|test|invalid|example)$/i.test(host))
+    throw new Error(`${host} is a placeholder domain, not a real site; use web.search to find a real URL first`);
+  if (process.env.WEB_ALLOW_PRIVATE === "true") return u;
   if (/^(localhost|.*\.localhost|.*\.local|.*\.internal)$/i.test(host)) throw new Error(`${host} is a private address`);
   let addrs;
   if (net.isIP(host)) addrs = [host];

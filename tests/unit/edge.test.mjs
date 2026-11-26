@@ -2024,3 +2024,30 @@ test("eureka board: 'no edge cases recorded yet' and 'the board is empty' are re
     "Two writers on one agent record: the second PATCH silently overwrites the first.",
   ]) assert.equal(D.isFinding(t), true, t);
 });
+
+// ================= round 34: CI 45784659171 / 45789651287 — copied eurekas, proposals, placeholder hosts =================
+test("eureka board: a teammate's finding re-posted with padding is a duplicate; 'We should also explore…' is a proposal", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  // verbatim pair from CI 45784659171 (grok-engineer, then edge-critic)
+  const a = "Every agent and spawned agent has its own node, which can be used for extensive testing and development, and also for handling distributed file processing.";
+  const b = "Every agent and spawned agent has its own node (its own Linux machine with terminal, services, network, resources, environment and MCP tools), which can be leveraged for even more extensive testing and development.";
+  assert.equal(D.claim(a), D.claim(b), "same claim before the padding");
+  assert.equal(D.claim("Short claim, then more"), "", "too short to judge on its lead");
+  assert.ok(D.similar("The router retries a missing model forever.", "Agent creation fails when the name is only emoji.") < 0.75);
+  assert.equal(D.isFinding("We should also explore the edge case where files are processed in a distributed manner across multiple nodes to ensure our system can scale."), false);
+  assert.equal(D.isFinding("The team should remember that a good source for edge case scenarios is websites that provide documentation or examples of edge cases."), false);
+  assert.equal(D.isFinding("We found that two PATCH requests on one agent race and the second silently wins."), true, "a report of what was found still lands");
+  const id1 = D.addKnowledge("grok-engineer", "EUREKA: " + a);
+  const id2 = D.addKnowledge("edge-critic", b);
+  assert.ok(id1 === null || typeof id1 === "number"); assert.equal(id2, null, "padded copy refused");
+});
+
+test("netguard: placeholder hosts are refused with a plain hint, before any DNS lookup", async () => {
+  const { assertPublicUrl } = await import("../../src/tools/netguard.js");
+  for (const u of ["https://example.com/edge_cases", "http://mcp.example.com/mcp", "https://docs.example.org/x", "http://api.test/", "https://foo.invalid"])
+    await assert.rejects(assertPublicUrl(u), /placeholder domain.*web\.search/, u);
+  const saved = process.env.WEB_ALLOW_PRIVATE; process.env.WEB_ALLOW_PRIVATE = "true";
+  await assert.rejects(assertPublicUrl("https://example.com/"), /placeholder/, "even with WEB_ALLOW_PRIVATE");
+  if (saved === undefined) delete process.env.WEB_ALLOW_PRIVATE; else process.env.WEB_ALLOW_PRIVATE = saved;
+  for (const u of ["https://examples.com/", "https://mytest.dev/"]) await assertPublicUrl(u).catch(e => assert.doesNotMatch(e.message, /placeholder/, u));
+});

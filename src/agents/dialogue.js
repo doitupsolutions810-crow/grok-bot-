@@ -64,6 +64,8 @@ const NOT_A_FINDING = [
   // "No relevant edge cases have been recorded yet", "the board is empty": a status, not a finding
   /^(there\s+(are|is)\s+)?(no|nothing)\b[^.]{0,80}\b(recorded|found|yet|available|logged|so far)\b/i,
   /\b(knowledge board|board)\b[^.]{0,40}\b(is|was)\s+(currently\s+)?empty\b/i,
+  // "We should also explore the edge case where…": a proposal, not something found
+  /^(we|the team|you)\s+(should|could|might|must|need to)\s+(also\s+)?(explore|test|look|investigate|try|check|consider|examine|run|start|focus|prioriti[sz]e|remember)\b/i,
 ];
 export function isFinding(t) {
   const s = String(t || "").trim();
@@ -71,11 +73,21 @@ export function isFinding(t) {
   return !NOT_A_FINDING.some(re => re.test(s));
 }
 const words = s => new Set(String(s).toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+// the claim itself: the words before the first comma, bracket, colon or dash
+export function claim(s) {
+  const head = String(s).replace(/^\s*EUREKA:\s*/i, "").split(/[,(;:\u2014]|\s-\s/)[0];
+  const w = String(head).toLowerCase().match(/[a-z0-9]+/g) || [];
+  return w.length >= 6 ? w.join(" ") : "";
+}
 export function similar(a, b) {
   const A = words(a), B = words(b);
   if (!A.size || !B.size) return 0;
   let n = 0; for (const w of A) if (B.has(w)) n++;
-  return n / (A.size + B.size - n);
+  // the larger of overlap-over-union and overlap-over-the-shorter: a finding padded with a
+  // parenthetical ("its own node (its own Linux machine with …)") is still the same finding
+  const jac = n / (A.size + B.size - n);
+  const small = Math.min(A.size, B.size);
+  return small >= 6 ? Math.max(jac, n / small) : jac;
 }
 
 export function addKnowledge(agent, text, runId = "") {
@@ -84,7 +96,8 @@ export function addKnowledge(agent, text, runId = "") {
   // the same insight twice is one insight, and so is the same insight reworded
   if (db.prepare("SELECT 1 FROM knowledge WHERE lower(text)=lower(?)").get(t)) return null;
   const recent = db.prepare("SELECT text FROM knowledge ORDER BY id DESC LIMIT 60").all();
-  if (recent.some(r => similar(r.text, t) >= 0.7)) return null;
+  const c = claim(t);
+  if (recent.some(r => similar(r.text, t) >= 0.75 || (c && claim(r.text) === c))) return null;   // same claim, padded differently
   const info = db.prepare("INSERT INTO knowledge (ts, agent, text, run_id) VALUES (datetime('now'),?,?,?)").run(name(agent), t, clean(runId, 128));
   lattice.record("eureka", { agent: name(agent), runId, text: t });
   return Number(info.lastInsertRowid);

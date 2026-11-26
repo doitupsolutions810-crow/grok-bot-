@@ -4,9 +4,20 @@
 
 const BASE = process.env.GROKBOT_URL || "http://localhost:3000";
 const j = (r) => r.json();
-const post = (path, body) => fetch(`${BASE}/api${path}`, {
-  method: "POST", headers: { "content-type": "application/json" },
-  body: JSON.stringify(body || {})
+// POST over node:http with no client timeout. Global fetch (undici) gives up after 300 s
+// without response headers, and a CPU-only squad run takes longer than that: live run
+// 45775974761 failed "squad mode" with a bare "fetch failed" at exactly five minutes.
+import http from "node:http";
+const post = (path, body) => new Promise((resolve, reject) => {
+  const data = JSON.stringify(body || {});
+  const req = http.request(`${BASE}/api${path}`, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(data) } }, res => {
+    let buf = ""; res.setEncoding("utf8");
+    res.on("data", c => { buf += c; });
+    res.on("end", () => resolve({ status: res.statusCode, ok: res.statusCode < 400, json: async () => JSON.parse(buf), text: async () => buf }));
+  });
+  req.setTimeout(0);
+  req.on("error", reject);
+  req.end(data);
 });
 
 async function test(name, fn) {
@@ -72,12 +83,18 @@ const results = [
   }),
 
   await test("CodeX replay: run lifecycle logged", async () => {
+    // The newest run can still be in flight (an earlier test may have given up on it), so
+    // look for a finished run among the recent ones instead of assuming runs[0] is done.
     const runs = await fetch(`${BASE}/api/runs`).then(j);
     if (!runs.length) throw new Error("no runs recorded");
-    const run = await fetch(`${BASE}/api/runs/${runs[0].runId}`).then(j);
-    const kinds = run.events.map(e => e.kind);
-    if (!kinds.includes("run.start") || !kinds.includes("run.done")) throw new Error(`kinds: ${kinds.join(",")}`);
-    return `${runs[0].runId}: ${run.events.length} events, corrupt lines skipped`;
+    let seen = [];
+    for (const r0 of runs.slice(0, 10)) {
+      const run = await fetch(`${BASE}/api/runs/${r0.runId}`).then(j);
+      const kinds = run.events.map(e => e.kind);
+      seen.push(`${r0.runId}: ${[...new Set(kinds)].join(",")}`);
+      if (kinds.includes("run.start") && kinds.includes("run.done")) return `${r0.runId}: ${run.events.length} events, full lifecycle`;
+    }
+    throw new Error(`no finished run; ${seen.join(" | ").slice(0, 400)}`);
   }),
 
   await test("governor: health-gated parallelism", async () => {

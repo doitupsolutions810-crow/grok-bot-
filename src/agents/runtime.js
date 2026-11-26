@@ -4,6 +4,7 @@
 // A tool call that needs review pauses the thread (state saved via saveHeld)
 // and returns { pendingApproval } — the approve route resumes it exactly once.
 
+import { shortlist } from "./toolpick.js";
 import { chatRoute } from "../llm/router.js";
 import { teamContext } from "./dialogue.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
@@ -73,13 +74,17 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     ? tools
     : tools.filter(t => ALWAYS.has(t.name) || agent.tools?.includes(t.name) || agent.tools?.includes(t.name.split(".")[0]));
 
+  // offer a small model only the tools that fit this request (all granted tools stay executable)
+  const lastUser = [...messages].reverse().find(m => m.role === "user")?.content;
+  const offered = shortlist(available, typeof lastUser === "string" ? lastUser : String(userMessage ?? ""));
+
   // the Lattice follows every agent: what it was asked, what it thinks, what it does
   if (!resume) lattice.record("prompt", { agent: ctx.agent, runId: opts.runId, text: String(userMessage ?? ""),
-    data: { system: String(agent.systemPrompt || "").slice(0, 300), tools: available.map(t => t.name) } });
+    data: { system: String(agent.systemPrompt || "").slice(0, 300), tools: offered.map(t => t.name), granted: available.length } });
 
   for (let step = 0; step < maxSteps; step++) {
     let reply;
-    try { reply = await chatRoute(messages, available, { mode: agent.mode || "chat", model: agent.model || "" }); }
+    try { reply = await chatRoute(messages, offered, { mode: agent.mode || "chat", model: agent.model || "" }); }
     catch (e) { lattice.record("error", { agent: ctx.agent, runId: opts.runId, text: `model call failed: ${e.message}` }); throw e; }
 
     if (!reply.tool_calls?.length) {                         // final answer

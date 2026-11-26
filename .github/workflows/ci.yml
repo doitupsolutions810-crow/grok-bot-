@@ -59,6 +59,7 @@ jobs:
           fi
 
       - name: Live agent tests (real inference, docker exec, browser)
+        timeout-minutes: 30
         run: docker compose exec -T grok-bot node tests/live.test.js
 
       - name: Agent nodes (each agent's own container, terminal, services, limits)

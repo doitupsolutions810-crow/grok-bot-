@@ -1381,3 +1381,55 @@ test("new agents are on the roster and get research tools; users can grant them 
   assert.deepEqual(validate({ name: "Scholar", job: "studies", instructions: "Research upgrades.", tools: ["web.search", "web.scrape", "github"] }, { partial: true }), []);
   assert.ok(validate({ name: "X", tools: ["github.hack"] }, { partial: true }).length, "unknown tools still rejected");
 });
+
+// ================= round 18: live run 45775974761 regressions =================
+test("tool shortlist: a shell request reaches the terminal even with 45 tools granted (live regression)", async () => {
+  const { shortlist } = await import("../../src/agents/toolpick.js");
+  const names = ["browser", "web.fetch", "web.search", "web.scrape", "github.search", "github.read", "rag.search", "x.search", "x.post", "imagegen", "vision",
+    "task.board", "team.ask", "team.say", "team.inbox", "team.knowledge", "node.exec", "node.service", "node.info", "node.mcp", "team.spawn", "avrone.squad",
+    "skill.list", "skill.load", "harness.list", "harness.read", "harness.propose", "harness.proposals", "voice.speak", "memory.recall",
+    ...Array.from({ length: 14 }, (_, i) => `mcp.filesystem.op${i}`), "terminal"];
+  const tools = names.map(n => ({ name: n, description: n.startsWith("mcp.") ? "Read or write a file or directory within allowed directories." :
+    n === "terminal" ? "Run a shell command in the user's personal sandbox container and return stdout/stderr." : `the ${n} tool` }));
+  const pick = (m) => shortlist(tools, m).map(t => t.name);
+  const sh = pick("Run `uname -a` in the sandbox and tell me the kernel version.");
+  assert.ok(sh.length <= 12); assert.ok(sh.includes("terminal"), sh.join());
+  assert.equal(sh[0], "terminal", "the obvious tool ranks first");
+  assert.ok(pick("Search the web for the latest agent frameworks").includes("web.search"));
+  assert.ok(pick("study how other github repositories do it").slice(0, 3).some(n => n.startsWith("github.")));
+  assert.ok(pick("improve your own harness with a new tool").includes("harness.propose"));
+  assert.ok(pick("please use harness.proposals").includes("harness.proposals"), "a tool named outright is always offered");
+  const vague = pick("hi");
+  assert.ok(vague.length >= 5 && vague.includes("terminal"), "a vague message still gets a sensible floor");
+  assert.equal(shortlist(tools.slice(0, 6), "x").length, 6, "small toolsets pass through untouched");
+  assert.equal(shortlist(tools, "x", 0).length, tools.length, "0 disables");
+  assert.equal(shortlist(tools, null).length, 5, "no message: just the floor");
+  assert.deepEqual(shortlist([], "x"), []);
+});
+
+test("runtime offers the shortlist to the model but still executes any granted tool", async () => {
+  const { runAgent } = await import("../../src/agents/runtime.js");
+  let recalled = false;
+  const tools = Array.from({ length: 30 }, (_, i) => ({ name: `noise.t${i}`, description: "unrelated", parameters: { type: "object", properties: {} }, async run() { return {}; } }))
+    .concat([{ name: "terminal", description: "Run a shell command", parameters: { type: "object", properties: {} }, async run() { return { stdout: "Linux" }; } },
+             { name: "memory.recall", description: "recall", parameters: { type: "object", properties: {} }, async run() { recalled = true; return { ok: 1 }; } }]);
+  replyQueue.push({ role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "memory.recall", arguments: "{}" } }] },
+                  { role: "assistant", content: "Kernel: Linux 6.8" });
+  const from = lastBodies.length;
+  const out = await runAgent({ id: "t", tools: ["*"], systemPrompt: "x", review: false }, "Run uname -a and report the kernel", tools, { maxSteps: 3 });
+  const offered = (lastBodies[from]?.tools || []).map(t => t.function?.name || t.name);
+  assert.ok(offered.length > 0 && offered.length <= 12, `offered ${offered.length}`);
+  assert.ok(offered.includes("terminal"), offered.join());
+  assert.ok(!offered.includes("memory.recall") || offered.length <= 12);
+  assert.ok(recalled, "a granted tool outside the shortlist still runs");
+  assert.match(String(out), /Linux 6\.8/);
+});
+
+test("live suite: POSTs don't use fetch's 300 s header timeout, and CodeX looks past an in-flight run", async () => {
+  const src = (await import("node:fs")).readFileSync(new URL("../live.test.js", import.meta.url), "utf8");
+  assert.match(src, /http\.request\(/); assert.match(src, /setTimeout\(0\)/);
+  assert.doesNotMatch(src, /const post = \(path, body\) => fetch\(/);
+  assert.match(src, /runs\.slice\(0, 10\)/);
+  const ci = (await import("node:fs")).readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(ci, /Live agent tests[^\n]*\n\s+timeout-minutes: \d+/);
+});

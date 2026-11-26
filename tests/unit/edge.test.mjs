@@ -1773,3 +1773,23 @@ test("MCP server: agent_ask caps concurrent runs, frees the slot on success and 
   assert.equal(_running(), 0, "a refused task never takes a slot");
   delete process.env.MCP_MAX_CONCURRENT;
 });
+
+// ================= round 25: a broken research file must not crash boot =================
+test("research env: malformed, truncated or foreign env files are ignored by list() and init() instead of crashing boot", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  const d = join(process.env.DATA_DIR, "research"); mkdirSync(d, { recursive: true });
+  const junk = { "env-junk01": "{}", "env-junk02": "null", "env-junk03": "[1,2]", "env-junk04": '{"id":"env-junk04","status":"running"}',
+    "env-junk05": '{"id":"env-other1","goal":"g","status":"running","agents":["a"],"createdAt":"x","deadline":"2030-01-01","step":0,"maxSteps":1,"findings":[],"questions":[],"log":[]}',
+    "env-junk06": '{"id":"env-junk06","goal":"g","status":"exploding","agents":["a"],"createdAt":"x","deadline":"2030-01-01","step":0,"maxSteps":1,"findings":[],"questions":[],"log":[]}',
+    "env-junk07": '{"id":"env-junk07","goal":"g","status":"running","agents":["a"],"createdAt":"x","deadline":"2030-01-01","step":0,"maxSteps":1,"findings":{},"questions":[],"log":[]}',
+    "env-junk08": '{"id":"env-junk08", "goal": "trunc' };
+  for (const [n, c] of Object.entries(junk)) writeFileSync(join(d, `${n}.json`), c);
+  assert.doesNotThrow(() => R.list({ limit: 200 }));
+  assert.ok(!R.list({ limit: 200 }).some(e => e.id.startsWith("env-junk")), "junk never listed");
+  for (const id of Object.keys(junk)) assert.equal(R.get(id), null, id);
+  assert.doesNotThrow(() => R.init({ getAgent: id => ({ id }), tools: [], runAgent: async () => "ok" }));
+  assert.equal(R.control("env-junk04", "resume").status, 404);
+  R._reset();
+});

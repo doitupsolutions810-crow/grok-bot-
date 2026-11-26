@@ -34,7 +34,18 @@ function save(env) {
 }
 export function get(id) {
   if (!ID_RE.test(String(id))) return null;
-  try { return JSON.parse(fs.readFileSync(file(id), "utf8")); } catch { return null; }
+  try { return wellFormed(JSON.parse(fs.readFileSync(file(id), "utf8")), id); } catch { return null; }
+}
+// A hand-edited, truncated or foreign file must never crash list() or boot (init runs at
+// startup): anything that isn't a whole environment is ignored.
+const STATUSES = new Set(["running", "paused", "done", "stopped"]);
+function wellFormed(e, id) {
+  if (!e || typeof e !== "object" || Array.isArray(e) || e.id !== id) return null;
+  if (typeof e.goal !== "string" || !STATUSES.has(e.status) || !Array.isArray(e.agents) || !e.agents.length) return null;
+  if (typeof e.createdAt !== "string" || Number.isNaN(Date.parse(e.deadline))) return null;
+  if (!Number.isFinite(e.step) || !Number.isFinite(e.maxSteps)) return null;
+  for (const k of ["findings", "questions", "log"]) if (!Array.isArray(e[k])) return null;
+  return e;
 }
 export function list({ limit = 50 } = {}) {
   let names = [];

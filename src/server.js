@@ -21,6 +21,7 @@ import { dialogueTools, council, knowledge as teamKnowledge } from "./agents/dia
 import * as lattice from "./agents/lattice.js";
 import { nodeTools } from "./agents/nodes.js";
 import { harnessTools } from "./agents/harness.js";
+import { mindTools } from "./agents/mind.js";
 import { getAgent } from "./agents/registry.js";
 import { spawnTool } from "./tools/spawn.js";
 import { avroneTool } from "./tools/avrone.js";
@@ -45,7 +46,8 @@ async function main() {
     teamAskTool(() => tools),              // delegate to a named teammate
     ...dialogueTools(),                    // team.say / team.inbox / team.knowledge
     ...nodeTools(() => docker, getAgent),
-    ...harnessTools(),                     // harness.list / read / propose / proposals (self-development)  // node.exec / node.service / node.info / node.mcp (own machine per agent)
+    ...harnessTools(),
+    ...mindTools(),                        // mind.think / journal / goals: visible reasoning + self-evolution                     // harness.list / read / propose / proposals (self-development)  // node.exec / node.service / node.info / node.mcp (own machine per agent)
     spawnTool(() => tools, () => docker),                // depth-limited subagent spawn
     avroneTool,                            // the concluding system bridge: delegate to AVRONE's squad
     ...skillTools(),                       // recorded browser skills → tools

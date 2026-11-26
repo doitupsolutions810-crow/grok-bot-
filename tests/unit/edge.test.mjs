@@ -1433,3 +1433,84 @@ test("live suite: POSTs don't use fetch's 300 s header timeout, and CodeX looks 
   const ci = (await import("node:fs")).readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(ci, /Live agent tests[^\n]*\n\s+timeout-minutes: \d+/);
 });
+
+// ================= round 19: visible reasoning and self-evolving minds =================
+test("splitReasoning pulls thinking out of every model dialect and never echoes it back", async () => {
+  const { splitReasoning } = await import("../../src/agents/mind.js");
+  let r = splitReasoning({ role: "assistant", content: "<think>Check the kernel first.</think>\nIt is Linux." });
+  assert.equal(r.reasoning, "Check the kernel first."); assert.equal(r.msg.content, "It is Linux.");
+  r = splitReasoning({ content: "Answer", reasoning_content: " A ", reasoning: "B", thinking: "C" });
+  assert.equal(r.reasoning, "A\n\nB\n\nC"); assert.deepEqual(Object.keys(r.msg), ["content"]);
+  r = splitReasoning({ content: "<THINK>unclosed thought that ran out of tokens" });
+  assert.equal(r.reasoning, "unclosed thought that ran out of tokens"); assert.equal(r.msg.content, "");
+  r = splitReasoning({ content: "<think></think>x<think>two</think>y" });
+  assert.equal(r.reasoning, "two"); assert.equal(r.msg.content, "xy");
+  r = splitReasoning({ content: null, tool_calls: [{ id: 1 }] });
+  assert.equal(r.reasoning, ""); assert.equal(r.msg.tool_calls.length, 1);
+  assert.equal(splitReasoning(null).reasoning, "");
+  assert.equal(splitReasoning({ content: "plain" }).msg.content, "plain");
+});
+
+test("mind tools: think is recorded, journal and goals persist, dedupe, cap, bad input, and shape the next prompt", async () => {
+  const m = await import("../../src/agents/mind.js");
+  const lattice = await import("../../src/agents/lattice.js");
+  const [think, journal, goals] = m.mindTools();
+  const ctx = { agent: "thinker-1", run: { runId: "r-mind" } };
+  assert.equal((await think.run({ thought: "First, list what could break.\u0000" }, ctx)).ok, true);
+  assert.ok(lattice.events({ kind: "reasoning", limit: 50 }).some(e => e.agent === "thinker-1" && e.text === "First, list what could break."));
+  assert.match((await think.run({ thought: "   " }, ctx)).error, /required/);
+  assert.match((await think.run({ thought: { x: 1 } }, ctx)).error, /required/);
+  assert.equal((await journal.run({ action: "write", lesson: "Small models need fewer tools." }, ctx)).entries, 1);
+  assert.equal((await journal.run({ action: "write", lesson: "small models need FEWER tools." }, ctx)).duplicate, true);
+  assert.match((await journal.run({ action: "erase" }, ctx)).error, /write or read/);
+  assert.match((await journal.run({ action: "write" }, ctx)).error, /lesson/);
+  const g = (await goals.run({ action: "set", goal: "Find one new edge case per session." }, ctx)).goal;
+  assert.match(g.id, /^g/);
+  const prompt = m.mindContext("thinker-1");
+  assert.match(prompt, /Small models need fewer tools/); assert.match(prompt, /Find one new edge case/);
+  assert.equal((await goals.run({ action: "done", id: g.id }, ctx)).goal.done, true);
+  assert.ok(lattice.events({ kind: "eureka", limit: 50 }).some(e => e.text === "Goal met: Find one new edge case per session."));
+  assert.doesNotMatch(m.mindContext("thinker-1"), /Find one new edge case/, "met goals leave the prompt");
+  assert.match((await goals.run({ action: "done", id: "nope" }, ctx)).error, /no such goal/);
+  assert.equal(m.mindContext("nobody-yet"), "");
+  for (let i = 0; i < 50; i++) await goals.run({ action: "set", goal: `g${i}` }, ctx);
+  assert.match((await goals.run({ action: "set", goal: "one too many" }, ctx)).error, /at most 50/);
+  for (let i = 0; i < 510; i++) await journal.run({ action: "write", lesson: `lesson ${i}` }, ctx);
+  assert.equal(m.readMind("thinker-1").journal.length, 500, "journal is capped");
+  assert.equal((await journal.run({ action: "read", limit: 1e9 }, ctx)).entries.length, 100);
+  // hostile agent ids can't escape the minds folder
+  await journal.run({ action: "write", lesson: "x" }, { agent: "../../etc/passwd" });
+  const { existsSync } = await import("node:fs");
+  assert.ok(existsSync(join(process.env.DATA_DIR, "minds", ".._.._etc_passwd.json")));
+  // a corrupt mind file reads as empty instead of crashing the agent
+  (await import("node:fs")).writeFileSync(join(process.env.DATA_DIR, "minds", "broken.json"), "{not json");
+  assert.deepEqual(m.readMind("broken"), { journal: [], goals: [] });
+});
+
+test("runtime records a model's own reasoning, strips it from the answer, and folds the mind into the system prompt", async () => {
+  const { runAgent } = await import("../../src/agents/runtime.js");
+  const lattice = await import("../../src/agents/lattice.js");
+  const [, journal] = (await import("../../src/agents/mind.js")).mindTools();
+  await journal.run({ action: "write", lesson: "Always cite the source URL." }, { agent: "reasoner" });
+  replyQueue.push({ role: "assistant", content: "<think>The user wants a number. 6*7 is 42.</think>The answer is 42." });
+  const from = lastBodies.length;
+  const out = await runAgent({ id: "reasoner", tools: [], systemPrompt: "You add numbers." }, "What is 6 times 7?", [], { runId: "r-think", maxSteps: 2 });
+  assert.equal(out, "The answer is 42.");
+  assert.ok(lattice.events({ kind: "reasoning", limit: 50 }).some(e => e.agent === "reasoner" && /6\*7 is 42/.test(e.text)));
+  const sys = lastBodies[from].messages.find(x => x.role === "system").content;
+  assert.match(sys, /You add numbers\./); assert.match(sys, /Always cite the source URL\./);
+  const hl = lattice.highlights({ runIds: ["r-think"], limit: 10 });
+  assert.ok(hl.some(e => e.kind === "reasoning"), "reasoning shows up in session highlights");
+});
+
+test("GET /lattice/minds/:id shows an agent's journal and goals; bad ids are refused", async () => {
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json());
+  app.use("/api", makeRouter({ tools: [], docker: { listContainers: async () => [] } }));
+  const s = app.listen(0); s.unref();
+  const u = `http://127.0.0.1:${s.address().port}/api/lattice/minds/`;
+  const ok = await fetch(u + "reasoner").then(r => r.json());
+  assert.ok(ok.journal.some(e => e.text === "Always cite the source URL."));
+  assert.equal((await fetch(u + "a%20b")).status, 400);
+  assert.equal((await fetch(u + "x".repeat(81))).status, 400);
+});

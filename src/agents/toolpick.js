@@ -34,6 +34,9 @@ const HINTS = {
   "x.search": "x twitter tweet tweets posts trending",
   "x.post": "x twitter tweet post publish",
   "voice.speak": "speak voice say aloud audio tts",
+  "mind.think": "think reason reasoning step plan consider why hard problem reflect",
+  "mind.journal": "journal lesson learned remember reflect evolve",
+  "mind.goals": "goal goals objective aim evolve want",
   "memory.recall": "remember recall memory earlier previous"
 };
 const STOP = new Set("the and for with that this from your you are was what when where which into then than them they have has had not but can all any how why who our out use using via per one two its it's".split(" "));

@@ -18,6 +18,7 @@ import { getAgent } from "./agents/registry.js";
 import * as nodes from "./agents/nodes.js";
 import * as lattice from "./agents/lattice.js";
 import * as harness from "./agents/harness.js";
+import { readMind } from "./agents/mind.js";
 import { post as postDialogue, feed as dialogueFeed, knowledge as teamKnowledge, council, KINDS } from "./agents/dialogue.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
@@ -301,6 +302,10 @@ export function makeRouter({ tools, docker }) {
   r.get("/lattice/highlights", (req, res) => {
     const runIds = req.query.runIds ? String(req.query.runIds).split(",") : lattice.sessionStatus().runIds;
     res.json({ highlights: lattice.highlights({ runIds, limit: req.query.limit }) });
+  });
+  r.get("/lattice/minds/:id", (req, res) => {        // an agent's journal and self-set goals
+    if (!/^[\w.-]{1,80}$/.test(req.params.id)) return res.status(400).json({ error: "bad agent id" });
+    res.json({ agent: req.params.id, ...readMind(req.params.id) });
   });
   r.get("/lattice/mission", (_req, res) => res.json({ mission: lattice.mission() }));
   r.get("/lattice/session", (_req, res) => res.json(lattice.sessionStatus()));

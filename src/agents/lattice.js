@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 
-export const KINDS = ["prompt", "thought", "tool_call", "tool_result", "say", "eureka", "answer", "error", "cycle"];
+export const KINDS = ["prompt", "thought", "reasoning", "tool_call", "tool_result", "say", "eureka", "answer", "error", "cycle"];
 const RING = 5000;
 const MAX_FILE = 5 * 1024 * 1024;
 const bus = new EventEmitter();
@@ -94,6 +94,7 @@ export function graph() {
     const n = node(e.agent);
     if (e.kind === "prompt") n.prompts++;
     else if (e.kind === "thought") n.thoughts++;
+    else if (e.kind === "reasoning") n.reasoning = (n.reasoning || 0) + 1;
     else if (e.kind === "tool_call") n.tools++;
     else if (e.kind === "tool_result" && e.data?.ok === false) n.toolErrors++;
     else if (e.kind === "eureka") n.eurekas++;
@@ -205,10 +206,10 @@ export function stopSession() { session.stop = true; return sessionStatus(); }
 export function highlights({ runIds, limit = 10 } = {}) {
   const set = runIds?.length ? new Set(runIds) : null;
   const pool = ring.filter(e => (!set || set.has(e.runId) || e.kind === "eureka") && e.agent && e.agent !== "human" && e.agent !== "lattice");
-  const score = e => (e.kind === "eureka" ? 1000 : 0) + (e.kind === "say" ? 300 : 0) + (e.kind === "thought" ? 200 : 0) +
+  const score = e => (e.kind === "eureka" ? 1000 : 0) + (e.kind === "say" ? 300 : 0) + (e.kind === "thought" ? 200 : 0) + (e.kind === "reasoning" ? 250 : 0) +
     (e.kind === "tool_call" && /^node\./.test(e.text) ? 150 : 0) + (/EUREKA:/i.test(e.text) ? 500 : 0) + Math.min(e.text.length, 800) / 4;
   const seen = new Set();
-  return pool.filter(e => ["eureka", "say", "thought", "tool_call", "answer"].includes(e.kind))
+  return pool.filter(e => ["eureka", "say", "reasoning", "thought", "tool_call", "answer"].includes(e.kind))
     .sort((a, b) => score(b) - score(a))
     .filter(e => { const k = e.text.slice(0, 120).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, Math.min(Math.max(1, Number(limit) || 10), 100));

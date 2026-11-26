@@ -135,6 +135,22 @@ jobs:
             for (const e of h.slice(0, 8)) console.log(`::notice title=session ${e.agent} ${e.kind}::${esc(e.text).slice(0, 900)}`);
             console.log(`session: ${s.cycles} cycles, ${h.length} highlights`);
           '
+          # each agent's mind after the session: its reasoning, lessons and self-set goals
+          for a in grok-main edge-critic grok-scout grok-engineer; do
+            curl -fsS "http://localhost:3000/api/lattice/minds/$a" -o "mind-$a.json" || true
+          done
+          curl -fsS "http://localhost:3000/api/lattice/events?kind=reasoning&limit=500" -o reasoning.json || true
+          node -e '
+            const fs = require("fs"), esc = t => String(t).replace(/\s+/g, " ").replace(/%/g, "%25");
+            const r = (JSON.parse(fs.readFileSync("reasoning.json", "utf8")).events || []).slice(-4);
+            for (const e of r) console.log(`::notice title=reasoning ${e.agent}::${esc(e.text).slice(0, 900)}`);
+            for (const f of fs.readdirSync(".").filter(f => /^mind-.*\.json$/.test(f))) {
+              const m = JSON.parse(fs.readFileSync(f, "utf8"));
+              for (const j of (m.journal || []).slice(-2)) console.log(`::notice title=mind ${m.agent} lesson::${esc(j.text).slice(0, 500)}`);
+              for (const g of (m.goals || []).slice(-2)) console.log(`::notice title=mind ${m.agent} goal::${esc(g.text).slice(0, 300)}${g.done ? " (met)" : ""}`);
+            }
+            console.log(`reasoning: ${r.length} shown`);
+          '
 
       - name: Upload the agents' full logs
         if: always()
@@ -145,6 +161,8 @@ jobs:
             lattice-all.json
             highlights.json
             council.json
+            reasoning.json
+            mind-*.json
           if-no-files-found: ignore
 
       - name: Agents' evolution loop (writes EVOLVE.md from the live runs)

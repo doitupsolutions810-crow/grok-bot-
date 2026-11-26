@@ -5,6 +5,7 @@
 // and returns { pendingApproval } — the approve route resumes it exactly once.
 
 import { shortlist } from "./toolpick.js";
+import { splitReasoning, mindContext } from "./mind.js";
 import { chatRoute } from "../llm/router.js";
 import { teamContext } from "./dialogue.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
@@ -52,7 +53,9 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
 
 const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load",
   "node.exec", "node.service", "node.info", "node.mcp",
-  "harness.list", "harness.read", "harness.propose", "harness.proposals"]);   // own node + can improve its own harness
+  "harness.list", "harness.read", "harness.propose", "harness.proposals",
+  "mind.think", "mind.journal", "mind.goals"]);   // own node + can improve its own harness
+function safeMind(id) { try { return mindContext(id); } catch { return ""; } }
 function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
 
 export async function runAgent(agent, userMessage, tools, opts = {}) {
@@ -65,7 +68,7 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
   };
   const messages = resume || [
     // every agent gets the plain-English team style + the newest team discoveries
-    { role: "system", content: `${agent.systemPrompt || "You are a helpful AI teammate."}\n\n${safeTeamContext()}` },
+    { role: "system", content: [agent.systemPrompt || "You are a helpful AI teammate.", safeTeamContext(), safeMind(opts.agentName || agent.id)].filter(Boolean).join("\n\n") },
     { role: "user", content: String(userMessage ?? "") }
   ];
   // tools: ["*"] grants the full live toolset
@@ -86,6 +89,10 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     let reply;
     try { reply = await chatRoute(messages, offered, { mode: agent.mode || "chat", model: agent.model || "" }); }
     catch (e) { lattice.record("error", { agent: ctx.agent, runId: opts.runId, text: `model call failed: ${e.message}` }); throw e; }
+
+    // reasoning models (<think>, reasoning_content, …): show their thinking, keep it out of the answer
+    const { reasoning } = splitReasoning(reply);
+    if (reasoning) lattice.record("reasoning", { agent: ctx.agent, runId: opts.runId, text: reasoning });
 
     if (!reply.tool_calls?.length) {                         // final answer
       lattice.record("answer", { agent: ctx.agent, runId: opts.runId, text: reply.content ?? "" });

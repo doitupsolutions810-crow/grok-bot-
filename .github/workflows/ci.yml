@@ -118,7 +118,7 @@ jobs:
         timeout-minutes: 25
         run: |
           curl -fsS -X POST http://localhost:3000/api/lattice/session -H 'content-type: application/json' \
-            -d '{"minutes":10,"agents":["grok-main","edge-critic","grok-researcher"]}' | tee session.json
+            -d '{"minutes":10,"agents":["grok-main","edge-critic","grok-scout","grok-engineer"]}' | tee session.json
           for i in $(seq 1 150); do
             active=$(curl -fsS http://localhost:3000/api/lattice/session | node -pe 'JSON.parse(require("fs").readFileSync(0)).active')
             [ "$active" = "false" ] && break; sleep 10

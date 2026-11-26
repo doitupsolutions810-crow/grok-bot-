@@ -1537,3 +1537,170 @@ test("harness: concurrent proposals test one at a time, and a flood is refused i
   assert.equal(after.status, "passed");
   delete process.env.HARNESS_MAX_QUEUE; delete process.env.LOG; delete process.env.HARNESS_ROOT; delete process.env.HARNESS_TEST_CMD;
 });
+
+// ================= round 21: long-horizon research environments + MCP reach both ways =================
+const waitFor = async (fn, ms = 4000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await new Promise(r => setTimeout(r, 20)); } return fn(); };
+
+test("research env: hostile input is refused, agents write findings through env.record, and 'done' ends it", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  for (const bad of [null, [], { goal: "short" }, { goal: "x".repeat(2001) }, { goal: "a valid research goal", agents: [] },
+    { goal: "a valid research goal", agents: ["../../etc"] }, { goal: "a valid research goal", maxSteps: 0 }, { goal: "a valid research goal", maxSteps: 1e9 },
+    { goal: "a valid research goal", horizonHours: "6" }, { goal: "a valid research goal", stepIntervalSec: -1 }, { goal: "a valid research goal", maxSteps: NaN }])
+    assert.ok(R.create(bad, {}).error, `refused ${JSON.stringify(bad)?.slice(0, 60)}`);
+  assert.match(R.create({ goal: "a valid research goal", agents: ["ghost"] }, { getAgent: () => null }).error, /unknown agent/);
+  for (const id of ["../x", "env-", "env-../../a", "ENV-ABCDEF", "env-abc def"]) assert.equal(R.get(id), null);
+
+  const [record] = R.envTools();
+  const seenBriefs = [];
+  let calls = 0;
+  R.init({ getAgent: id => ({ id, systemPrompt: "" }), tools: [], runAgent: async (agent, brief, _t, opts) => {
+    seenBriefs.push({ agent: agent.id, brief });
+    calls++;
+    const ctx = { agent: agent.id, envId: opts.envId };
+    if (calls === 1) { await record.run({ kind: "plan", text: "1. search 2. read 3. conclude" }, ctx);
+      await record.run({ kind: "question", text: "Which engines answer from CI?" }, ctx); }
+    if (calls === 2) { await record.run({ kind: "finding", text: "SearXNG aggregates engines.", sources: ["https://docs.searxng.org", "javascript:alert(1)", 5] }, ctx);
+      await record.run({ kind: "finding", text: "searxng AGGREGATES engines.".replace("searxng AGGREGATES", "SearXNG aggregates") }, ctx);  // duplicate
+      await record.run({ kind: "close_question", questionId: 1, text: "Bing does." }, ctx); }
+    if (calls === 3) await record.run({ kind: "done", text: "Use SearXNG with a Bing fallback." }, ctx);
+    return "worked";
+  } });
+  const out = R.create({ goal: "Find the best search backend for agents", agents: ["grok-scout", "grok-researcher"], maxSteps: 10, stepIntervalSec: 0 });
+  assert.ok(out.env?.id, JSON.stringify(out));
+  const env = await waitFor(() => { const e = R.get(out.env.id); return e?.status === "done" && e; });
+  assert.equal(env.status, "done"); assert.equal(env.step, 3);
+  assert.match(env.endedReason, /concluded by grok-scout: Use SearXNG/);
+  assert.equal(env.findings.length, 1, "duplicate finding dropped");
+  assert.deepEqual(env.findings[0].sources, ["https://docs.searxng.org"], "only http(s) sources kept");
+  assert.equal(env.questions[0].closed, true);
+  assert.deepEqual(seenBriefs.map(b => b.agent), ["grok-scout", "grok-researcher", "grok-scout"], "the roster takes turns");
+  assert.match(seenBriefs[1].brief, /Current plan:\n1\. search/); assert.match(seenBriefs[1].brief, /#1 Which engines/);
+  const md = R.report(out.env.id);
+  assert.match(md, /^# Find the best search backend/); assert.match(md, /Sources: https:\/\/docs\.searxng\.org/); assert.match(md, /## Answered questions/);
+  assert.match((await record.run({ kind: "finding", text: "late" }, { envId: out.env.id })).error, /done/);
+  assert.match((await record.run({ kind: "finding", text: "x" }, {})).error, /not inside/);
+  assert.match((await record.run({ kind: "nope", text: "x" }, { envId: "env-zzzzzz" })).error, /no research environment/);
+  R._reset();
+});
+
+test("research env: 3 failed steps pause it, resume and stop work, budget ends it, and a restart picks it up", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  let mode = "fail";
+  const deps = { getAgent: id => ({ id }), tools: [], runAgent: async () => { if (mode === "fail") throw new Error("model down"); return "ok"; } };
+  R.init(deps);
+  const a = R.create({ goal: "Keep failing until paused please", agents: ["grok-main"], stepIntervalSec: 0, maxSteps: 50 });
+  let e = await waitFor(() => { const x = R.get(a.env.id); return x?.status === "paused" && x; });
+  assert.equal(e.status, "paused"); assert.equal(e.step, 3); assert.match(e.endedReason, /3 failed steps.*model down/);
+  assert.equal(R.control(a.env.id, "pause").error ? "refused" : "ok", "ok", "pausing a paused env is harmless");
+  mode = "ok";
+  assert.equal(R.control(a.env.id, "resume").env.status, "running");
+  await waitFor(() => R.get(a.env.id).step >= 6);
+  assert.equal(R.control(a.env.id, "stop").env.status, "stopped");
+  const stoppedAt = R.get(a.env.id).step;
+  await new Promise(r => setTimeout(r, 100));
+  assert.ok(R.get(a.env.id).step <= stoppedAt + 1, "a stopped env stops stepping");
+  assert.equal(R.control(a.env.id, "resume").status, 409);
+  assert.equal(R.control(a.env.id, "explode").status, 400);
+  assert.equal(R.control("env-nothere1", "stop").status, 404);
+
+  const b = R.create({ goal: "Run out of budget gracefully", agents: ["grok-main"], stepIntervalSec: 0, maxSteps: 4 });
+  e = await waitFor(() => { const x = R.get(b.env.id); return x?.status === "done" && x; });
+  assert.equal(e.step, 4); assert.match(e.endedReason, /step budget/);
+
+  // a crash mid-run: the env stays "running" on disk; a fresh boot resumes it
+  R._reset();
+  mode = "hang";
+  const hangDeps = { ...deps, runAgent: () => new Promise(() => {}) };
+  R.init(hangDeps);
+  const c = R.create({ goal: "Survive a restart in the middle", agents: ["grok-main"], stepIntervalSec: 0, maxSteps: 3 });
+  R._reset();                                         // the process "dies" mid-step
+  assert.equal(R.get(c.env.id).status, "running");
+  mode = "ok";
+  assert.equal(R.init(deps), 1, "boot resumes the running env");
+  e = await waitFor(() => { const x = R.get(c.env.id); return x?.status === "done" && x; });
+  assert.equal(e.step, 3);
+  R._reset();
+});
+
+test("research env: RESEARCH_MAX_ACTIVE caps how many run at once (429 over HTTP)", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  const { readdirSync, rmSync } = await import("node:fs");
+  try { for (const f of readdirSync(join(process.env.DATA_DIR, "research"))) rmSync(join(process.env.DATA_DIR, "research", f)); } catch {}
+  process.env.RESEARCH_MAX_ACTIVE = "1";
+  R.init({ getAgent: id => ({ id }), tools: [], runAgent: () => new Promise(() => {}) });
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json()); app.use("/api", makeRouter({ tools: [], docker: null }));
+  const s = app.listen(0); s.unref();
+  const base = `http://127.0.0.1:${s.address().port}/api`;
+  const post = (p, body) => fetch(base + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const first = await post("/research/envs", { goal: "The first long research job", agents: ["grok-main"] });
+  assert.equal(first.status, 201);
+  const id = (await first.json()).env.id;
+  assert.equal((await post("/research/envs", { goal: "The second long research job", agents: ["grok-main"] })).status, 429);
+  assert.equal((await post("/research/envs", { goal: "x" })).status, 400);
+  assert.equal((await fetch(`${base}/research/envs/${id}`)).status, 200);
+  assert.equal((await fetch(`${base}/research/envs/env-..%2F..%2Fx`)).status, 404);
+  assert.match(await (await fetch(`${base}/research/envs/${id}/report`)).text(), /^# The first long research job/);
+  assert.equal((await post(`/research/envs/${id}/stop`, {})).status, 200);
+  assert.equal((await post("/research/envs", { goal: "Now there is room again", agents: ["grok-main"] })).status, 201, "a stopped env frees its slot");
+  assert.ok((await (await fetch(`${base}/research/envs`)).json()).envs.length >= 2);
+  delete process.env.RESEARCH_MAX_ACTIVE; R._reset(); s.close();
+});
+
+test("MCP both ways: /mcp is off without MCP_TOKEN, rejects a wrong token, and mcp.remote drives it like any MCP server", async () => {
+  const R = await import("../../src/agents/research-env.js");
+  R._reset();
+  const { mcpHandler } = await import("../../src/mcp-server.js");
+  const { mcpRemoteTool, _clients } = await import("../../src/tools/mcp-remote.js");
+  let asked = null;
+  const deps = { getAgent: id => (id === "grok-main" ? { id } : null), listAgents: () => [{ id: "grok-main", name: "Grok Main" }],
+    runAgent: async (a, task) => { asked = { a: a.id, task }; return `done: ${task}`; }, tools: [], knowledge: () => [{ text: "EUREKA one" }] };
+  R.init({ ...deps, runAgent: () => new Promise(() => {}) });
+  const app = express(); app.use(express.json()); app.all("/mcp", mcpHandler(deps));
+  const s = app.listen(0); s.unref();
+  const url = `http://127.0.0.1:${s.address().port}/mcp`;
+  const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "1" } } };
+  const hdr = tok => ({ "content-type": "application/json", accept: "application/json, text/event-stream", ...(tok ? { authorization: `Bearer ${tok}` } : {}) });
+  delete process.env.MCP_TOKEN;
+  assert.equal((await fetch(url, { method: "POST", headers: hdr(), body: JSON.stringify(init) })).status, 503);
+  process.env.MCP_TOKEN = "s3cret-token";
+  assert.equal((await fetch(url, { method: "POST", headers: hdr("wrong"), body: JSON.stringify(init) })).status, 401);
+  assert.equal((await fetch(url, { method: "POST", headers: hdr("s3cret-token-longer"), body: JSON.stringify(init) })).status, 401);
+  assert.equal((await fetch(url, { method: "GET", headers: hdr("s3cret-token") })).status, 405);
+
+  // the agent-side client, pointed at our own server. Netguard would (rightly) refuse 127.0.0.1,
+  // so the test swaps in a pass-through check and a fetch that adds the bearer token.
+  const tool = mcpRemoteTool({ check: async u => new URL(u), fetchImpl: (u, i = {}) => fetch(u, { ...i, headers: { ...Object.fromEntries(new Headers(i.headers || {})), authorization: "Bearer s3cret-token" } }) });
+  const listed = await tool.run({ url, action: "tools" });
+  assert.ok(!listed.error, listed.error);
+  assert.deepEqual(listed.tools.map(t => t.name).sort(), ["agent_ask", "agents_list", "knowledge_search", "lattice_highlights", "research_report", "research_start", "research_status"]);
+  const ans = await tool.run({ url, action: "call", tool: "agent_ask", arguments: { agent: "grok-main", task: "say hi" } });
+  assert.equal(ans.text, "done: say hi"); assert.deepEqual(asked, { a: "grok-main", task: "say hi" });
+  assert.match((await tool.run({ url, action: "call", tool: "agent_ask", arguments: { agent: "ghost", task: "x" } })).error, /unknown agent/);
+  assert.match((await tool.run({ url, action: "call", tool: "agent_ask", arguments: [] })).error, /required/);
+  assert.match((await tool.run({ url, action: "call", tool: "nope" })).error, /unknown tool/);
+  const started = await tool.run({ url, action: "call", tool: "research_start", arguments: { goal: "Research reached over MCP", agents: ["grok-main"] } });
+  const envId = JSON.parse(started.text).id;
+  assert.match(envId, /^env-/);
+  assert.match((await tool.run({ url, action: "call", tool: "research_report", arguments: { id: envId } })).text, /^# Research reached over MCP/);
+  assert.match((await tool.run({ url, action: "call", tool: "knowledge_search", arguments: { q: 5 } })).text, /EUREKA one/);
+  assert.match((await tool.run({ url: "", action: "tools" })).error, /url is required/);
+  assert.match((await tool.run({ url, action: "dance" })).error, /action must be/);
+  assert.match((await tool.run({ url, action: "call" })).error, /tool is required/);
+  R.control(envId, "stop");
+  delete process.env.MCP_TOKEN;
+  for (const c of _clients.values()) await c.client.close().catch(() => {});
+  _clients.clear(); R._reset(); s.close();
+});
+
+test("mcp.remote with the real netguard refuses private, metadata and credentialed MCP URLs before connecting", async () => {
+  const { mcpRemoteTool } = await import("../../src/tools/mcp-remote.js");
+  const tool = mcpRemoteTool();
+  for (const u of ["http://127.0.0.1:3000/mcp", "http://169.254.169.254/latest", "http://ollama:11434/mcp", "http://user:pw@example.com/mcp", "file:///etc/passwd", "http://[::1]/mcp", "http://10.0.0.5/mcp"]) {
+    const r = await tool.run({ url: u, action: "tools" });
+    assert.match(r.error || "", /could not reach MCP server/, u);
+  }
+});

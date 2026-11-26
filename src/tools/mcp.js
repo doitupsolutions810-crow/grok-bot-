@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const HANDSHAKE_TIMEOUT_MS = 20_000;
 
@@ -10,7 +11,8 @@ const HANDSHAKE_TIMEOUT_MS = 20_000;
 export async function loadMCPTools(serverConfigs) {
   const tools = [];
   for (const [id, cfg] of Object.entries(serverConfigs || {})) {
-    if (cfg?.transport !== "stdio" || typeof cfg.command !== "string") continue;
+    const http = cfg?.transport === "http" && typeof cfg.url === "string";
+    if (!http && (cfg?.transport !== "stdio" || typeof cfg.command !== "string")) continue;
     try {
       const serverTools = await withTimeout(connectServer(id, cfg), HANDSHAKE_TIMEOUT_MS);
       tools.push(...serverTools);
@@ -22,7 +24,12 @@ export async function loadMCPTools(serverConfigs) {
 }
 
 async function connectServer(id, cfg) {
-  const transport = new StdioClientTransport({ command: cfg.command, args: cfg.args });
+  // http servers come from the owner's own config, so they may be private (a sidecar); the
+  // bearer token is read from the env var the config names, never written into the config.
+  const transport = cfg.transport === "http"
+    ? new StreamableHTTPClientTransport(new URL(cfg.url), cfg.tokenEnv && process.env[cfg.tokenEnv]
+        ? { requestInit: { headers: { Authorization: `Bearer ${process.env[cfg.tokenEnv]}` } } } : {})
+    : new StdioClientTransport({ command: cfg.command, args: cfg.args });
   const client = new Client({ name: `grok-bot-${id}`, version: "1.0.0" });
   await client.connect(transport);
   const { tools: mcpTools } = await client.listTools();

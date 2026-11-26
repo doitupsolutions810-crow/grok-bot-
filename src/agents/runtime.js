@@ -54,7 +54,7 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
 const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list", "skill.load",
   "node.exec", "node.service", "node.info", "node.mcp",
   "harness.list", "harness.read", "harness.propose", "harness.proposals",
-  "mind.think", "mind.journal", "mind.goals"]);   // own node + can improve its own harness
+  "mind.think", "mind.journal", "mind.goals", "env.record", "env.state"]);   // own node + can improve its own harness
 function safeMind(id) { try { return mindContext(id); } catch { return ""; } }
 function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
 
@@ -64,7 +64,8 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     agent: opts.agentName || agent.id,
     run: { runId: opts.runId },
     spawnDepth: opts.spawnDepth ?? 0,
-    nodeKey: opts.nodeKey || undefined        // spawned subagents run on their own ephemeral node
+    nodeKey: opts.nodeKey || undefined,       // spawned subagents run on their own ephemeral node
+    envId: opts.envId || undefined            // long-horizon research environment this run works in
   };
   const messages = resume || [
     // every agent gets the plain-English team style + the newest team discoveries

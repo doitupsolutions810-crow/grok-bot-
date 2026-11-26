@@ -4,7 +4,7 @@
     {
       "id": "grok-main",
       "name": "Grok Main",
-      "systemPrompt": "You are Grok Bot, the chief of staff \u2014 sharp, proactive, maximum-agency. Use tools whenever they help; work end-to-end and return finished work. Delegate to teammates with team.ask or team.spawn when a specialist fits the job.",
+      "systemPrompt": "You are Grok Bot, the chief of staff — sharp, proactive, maximum-agency. Use tools whenever they help; work end-to-end and return finished work. Delegate to teammates with team.ask or team.spawn when a specialist fits the job.",
       "tools": [
         "*"
       ],
@@ -19,7 +19,8 @@
         "web.fetch",
         "web.search",
         "web.scrape",
-        "github"
+        "github",
+        "mcp"
       ],
       "model": "qwen2.5:3b"
     },
@@ -31,9 +32,10 @@
         "web.search",
         "web.scrape",
         "web.fetch",
-        "github"
+        "github",
+        "mcp"
       ],
-      "systemPrompt": "You scout the outside world for ideas that would make this team better: new tools, libraries, techniques and known failure modes. Search, read the sources, and report each finding to your teammates with its URL. Never present a guess as a fact."
+      "systemPrompt": "You scout the outside world for ideas that would make this team better: new tools, libraries, techniques and known failure modes. Search, read the sources, and report each finding to your teammates with its URL. Never present a guess as a fact. You can also reach public MCP servers with mcp.remote: list their tools, then call the ones that help."
     },
     {
       "id": "grok-engineer",
@@ -43,7 +45,8 @@
         "github",
         "web.search",
         "web.scrape",
-        "terminal"
+        "terminal",
+        "mcp"
       ],
       "systemPrompt": "You are the team's engineer. Study how other projects on GitHub solve a problem, read your own harness with harness.read, write and run code on your node with node.exec, and turn what works into a tested harness.propose. When a proposal fails, read the output, fix it, and propose again with basedOn."
     }
@@ -62,7 +65,7 @@
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": false,
-      "emoji": "\ud83d\udd0e"
+      "emoji": "🔎"
     },
     {
       "id": "inbox-manager",
@@ -76,7 +79,7 @@
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": false,
-      "emoji": "\ud83d\udcec"
+      "emoji": "📬"
     },
     {
       "id": "bug-fixer",
@@ -91,7 +94,7 @@
       "model": "qwen2.5:3b",
       "mode": "chat",
       "review": true,
-      "emoji": "\ud83d\udc1b"
+      "emoji": "🐛"
     }
   ],
   "mcpServers": {

@@ -22,6 +22,10 @@ import * as lattice from "./agents/lattice.js";
 import { nodeTools } from "./agents/nodes.js";
 import { harnessTools } from "./agents/harness.js";
 import { mindTools } from "./agents/mind.js";
+import { mcpRemoteTool } from "./tools/mcp-remote.js";
+import * as research from "./agents/research-env.js";
+import { mcpHandler } from "./mcp-server.js";
+const listAgents = () => [...Object.values(loadAgents().agents), ...listBots()];
 import { getAgent } from "./agents/registry.js";
 import { spawnTool } from "./tools/spawn.js";
 import { avroneTool } from "./tools/avrone.js";
@@ -47,7 +51,9 @@ async function main() {
     ...dialogueTools(),                    // team.say / team.inbox / team.knowledge
     ...nodeTools(() => docker, getAgent),
     ...harnessTools(),
-    ...mindTools(),                        // mind.think / journal / goals: visible reasoning + self-evolution                     // harness.list / read / propose / proposals (self-development)  // node.exec / node.service / node.info / node.mcp (own machine per agent)
+    ...mindTools(),
+    ...research.envTools(),                // env.record / env.state: long-horizon research environments
+    mcpRemoteTool(),                       // mcp.remote: reach any public MCP server at runtime                        // mind.think / journal / goals: visible reasoning + self-evolution                     // harness.list / read / propose / proposals (self-development)  // node.exec / node.service / node.info / node.mcp (own machine per agent)
     spawnTool(() => tools, () => docker),                // depth-limited subagent spawn
     avroneTool,                            // the concluding system bridge: delegate to AVRONE's squad
     ...skillTools(),                       // recorded browser skills → tools
@@ -82,6 +88,8 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", makeRouter({ tools, docker }));
+  // Grok Bot as an MCP server (off unless MCP_TOKEN is set)
+  app.all("/mcp", mcpHandler({ getAgent, listAgents, runAgent, tools, knowledge: teamKnowledge }));
   app.get("/api/status", (req, res) => res.json({
     ready: test.ok, degraded: !test.ok, tools: tools.map(t => t.name), selftest: test.results
   }));
@@ -91,6 +99,10 @@ async function main() {
   console.log(`[boot] lattice restored ${lattice.load()} events`);
   if (lattice.startAutonomy({ council, runAgent, tools, getAgent, knowledge: teamKnowledge }))
     console.log(`[boot] lattice autonomy on: a growth council every ${lattice.status().intervalMin} min`);
+
+  // 10. Long-horizon research environments: resume the ones that were running before a restart
+  const resumed = research.init({ runAgent, tools, getAgent });
+  if (resumed) console.log(`[boot] resumed ${resumed} research environment(s)`);
 
   app.listen(PORT, () => console.log(`[boot] Grok Bot fully live on :${PORT}`));
 }

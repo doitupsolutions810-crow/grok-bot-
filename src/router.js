@@ -19,6 +19,7 @@ import * as nodes from "./agents/nodes.js";
 import * as lattice from "./agents/lattice.js";
 import * as harness from "./agents/harness.js";
 import { readMind } from "./agents/mind.js";
+import * as research from "./agents/research-env.js";
 import { post as postDialogue, feed as dialogueFeed, knowledge as teamKnowledge, council, KINDS } from "./agents/dialogue.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
@@ -302,6 +303,23 @@ export function makeRouter({ tools, docker }) {
   r.get("/lattice/highlights", (req, res) => {
     const runIds = req.query.runIds ? String(req.query.runIds).split(",") : lattice.sessionStatus().runIds;
     res.json({ highlights: lattice.highlights({ runIds, limit: req.query.limit }) });
+  });
+  r.get("/research/envs", (req, res) => res.json({ envs: research.list({ limit: req.query.limit }) }));
+  r.post("/research/envs", (req, res) => {
+    const out = research.create(req.body, { getAgent });
+    res.status(out.error ? (out.busy ? 429 : 400) : 201).json(out);
+  });
+  r.get("/research/envs/:id", (req, res) => {
+    const e = research.get(req.params.id);
+    e ? res.json(e) : res.status(404).json({ error: "no such research environment" });
+  });
+  r.get("/research/envs/:id/report", (req, res) => {
+    const md = research.report(req.params.id);
+    md ? res.type("text/markdown").send(md) : res.status(404).json({ error: "no such research environment" });
+  });
+  r.post("/research/envs/:id/:action", (req, res) => {
+    const out = research.control(req.params.id, req.params.action);
+    res.status(out.error ? out.status : 200).json(out);
   });
   r.get("/lattice/minds/:id", (req, res) => {        // an agent's journal and self-set goals
     if (!/^[\w.-]{1,80}$/.test(req.params.id)) return res.status(400).json({ error: "bad agent id" });

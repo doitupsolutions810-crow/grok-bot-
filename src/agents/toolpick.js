@@ -37,6 +37,9 @@ const HINTS = {
   "mind.think": "think reason reasoning step plan consider why hard problem reflect",
   "mind.journal": "journal lesson learned remember reflect evolve",
   "mind.goals": "goal goals objective aim evolve want",
+  "env.record": "research environment finding findings question plan done record long horizon",
+  "env.state": "research environment state findings plan questions progress",
+  "mcp.remote": "mcp server servers protocol remote tool tools connect ecosystem reach",
   "memory.recall": "remember recall memory earlier previous"
 };
 const STOP = new Set("the and for with that this from your you are was what when where which into then than them they have has had not but can all any how why who our out use using via per one two its it's".split(" "));

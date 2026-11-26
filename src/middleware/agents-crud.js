@@ -17,7 +17,7 @@ const MODES = ["chat", "think", "deepsearch", "squad", "deep"];
 const ALL_TOOLS = [
   "*", "terminal", "browser", "web.fetch", "web.search", "web.scrape", "github", "x.search", "x.post", "imagegen",
   "rag.search", "team.ask", "team.spawn", "task.board", "skill.list", "skill.load",
-  "mcp.filesystem", "mcp.git", "voice.speak", "memory.recall", "node"
+  "mcp.filesystem", "mcp.git", "voice.speak", "memory.recall", "node", "mcp", "env"
 ];
 const FIELDS = ["name", "job", "instructions", "model", "tools", "mode", "trigger", "emoji", "review", "resources", "env", "network", "mcp"];
 const LIMITS = { name: 64, job: 1000, instructions: 8000, emoji: 16 };

@@ -27,6 +27,14 @@ const llm = http.createServer((req, res) => {
     seen.push(body);
     if (failModels.has(body.model)) { res.writeHead(500); return res.end('{"error":"boom"}'); }
     const message = replyQueue.shift() || { role: "assistant", content: `ok from ${body.model}` };
+    if (message.__raw) { res.writeHead(200, { "content-type": "application/json" }); return res.end(message.__raw); }
+    if (body.stream) {   // OpenAI-style SSE: content in 2 chunks, or a tool_calls delta
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const ch = d => res.write(`data: ${JSON.stringify({ id: "s", object: "chat.completion.chunk", created: 0, model: body.model, choices: [{ index: 0, delta: d, finish_reason: null }] })}\n\n`);
+      if (message.tool_calls) ch({ role: "assistant", tool_calls: message.tool_calls.map((t, index) => ({ index, ...t })) });
+      else { const c = message.content || ""; ch({ role: "assistant", content: c.slice(0, 3) }); ch({ content: c.slice(3) }); }
+      res.write("data: [DONE]\n\n"); return res.end();
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model: body.model,
       choices: [{ index: 0, finish_reason: "stop", message }] }));
@@ -611,4 +619,70 @@ test("MCP: junk server configs are skipped without spawning anything", async () 
   const { loadMCPTools } = await import("../../src/tools/mcp.js");
   assert.deepEqual(await loadMCPTools(undefined), []);
   assert.deepEqual(await loadMCPTools({ a: null, b: { transport: "stdio" }, c: { transport: "http", command: "x" } }), []);
+});
+
+// ================= round 6: streaming, empty completions, vision/X input hardening =================
+async function stream(body) {
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json());
+  app.use("/api", makeRouter({ tools: [], docker: { listContainers: async () => [] } }));
+  const s = app.listen(0); s.unref();
+  const r = await fetch(`http://127.0.0.1:${s.address().port}/api/chat/stream`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const txt = await r.text(); s.close();
+  return txt.split("\n\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6)).map(l => l === "[DONE]" ? l : JSON.parse(l));
+}
+
+test("stream: tokens arrive as deltas, end with [DONE], and the chat is remembered", async () => {
+  replyQueue = [{ role: "assistant", content: "hello streamer" }];
+  const ev = await stream({ message: "hi", session: "stream-mem" });
+  assert.equal(ev.at(-1), "[DONE]");
+  assert.equal(ev.filter(e => e.delta).map(e => e.delta).join(""), "hello streamer");
+  const mem = await import("../../src/memory/store.js");
+  assert.ok(mem.recall("stream-mem").recent.some(m => m.content === "hello streamer"));
+});
+
+test("stream: a model that answers with tool calls falls back to the agent loop (no empty reply)", async () => {
+  replyQueue = [
+    { role: "assistant", content: null, tool_calls: [{ id: "q", type: "function", function: { name: "nope", arguments: "{}" } }] },
+    { role: "assistant", content: null, tool_calls: [{ id: "q2", type: "function", function: { name: "nope", arguments: "{}" } }] },
+    { role: "assistant", content: "answered via loop" },
+  ];
+  const ev = await stream({ message: "use a tool" });
+  assert.match(ev.filter(e => e.delta).map(e => e.delta).join(""), /answered via loop/);
+});
+
+test("stream: every model down → error event + [DONE], never a hung socket", async () => {
+  ["big:7b", "mid:3b", "small:1b", "llama3.1:8b", "qwen2.5:3b"].forEach(m => failModels.add(m));
+  const ev = await stream({ message: "hi" });
+  failModels.clear();
+  assert.ok(ev.some(e => e.error)); assert.equal(ev.at(-1), "[DONE]");
+});
+
+test("router: an empty completion (no choices) falls through to the next model", async () => {
+  replyQueue = [{ __raw: JSON.stringify({ id: "x", choices: [] }) }];
+  const r = await mods.router.chatRoute([{ role: "user", content: "x" }], [], { mode: "chat" });
+  assert.match(r.content, /ok from/);
+});
+
+test("vision: data URLs accepted, junk base64 and missing image rejected before calling Ollama", async () => {
+  const { visionTool } = await import("../../src/tools/vision.js");
+  assert.match((await visionTool.run({})).error, /required/);
+  assert.match((await visionTool.run({ imageBase64: "<script>" })).error, /not valid base64/);
+  const ollama = http.createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.on("end", () => {
+    const j = JSON.parse(b); res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ response: `img=${j.images[0]}` })); }); });
+  await new Promise(r => ollama.listen(0, "127.0.0.1", r));
+  const prev = process.env.OLLAMA_URL; process.env.OLLAMA_URL = `http://127.0.0.1:${ollama.address().port}`;
+  assert.equal(await visionTool.run({ imageBase64: "data:image/png;base64,iVBO Rw0=" }), "img=iVBORw0=");
+  process.env.OLLAMA_URL = prev; ollama.close();
+});
+
+test("X tools: empty text/query rejected; x.post always needs review; emoji not split at 280", async () => {
+  const { xSearchTool, xPostTool } = await import("../../src/tools/xfeed.js");
+  assert.match((await xSearchTool.run({})).error, /query required/);
+  assert.match((await xPostTool.run({ text: "   " })).error, /text required/);
+  assert.equal(mods.approvals.needsReview("x.post", { text: "hi" }), true);
+  const api = await full();
+  assert.equal((await api("POST", "/tools/terminal/invoke", { command: "echo safe" })).status, 200);
 });

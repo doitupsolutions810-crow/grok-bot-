@@ -32,10 +32,12 @@ export const avroneTool = {
       const res = await fetch(`${AVRONE_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: prompt, mode })
+        body: JSON.stringify({ message: prompt.slice(0, 50_000), mode }),
+        signal: AbortSignal.timeout(Number(process.env.AVRONE_TIMEOUT_MS) || 15 * 60_000)
       });
       if (!res.ok) return { error: `AVRONE ${mode} failed: HTTP ${res.status}` };
-      const out = await res.json();
+      const out = await res.json().catch(() => null);
+      if (!out || typeof out !== "object") return { error: `AVRONE ${mode} returned a non-JSON body` };
       return { ok: true, mode, runId: out.run_id, answer: out.answer ?? out };
     } catch (e) {
       return { error: `AVRONE unreachable at ${AVRONE_URL}: ${e.message}` };

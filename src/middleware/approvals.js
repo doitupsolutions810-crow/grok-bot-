@@ -12,6 +12,8 @@ const DANGER = process.env.REVIEW_PATTERNS
 
 export function needsReview(tool, args) {
   if (tool === "terminal" && DANGER.test(String(args?.command ?? ""))) return true;
+  // posting publicly in the owner's name is always worth a human look
+  if (tool === "x.post") return true;
   return ["imagegen", "x.search"].includes(tool) && process.env.REVIEW_SENSITIVE === "true";
 }
 

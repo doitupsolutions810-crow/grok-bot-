@@ -196,7 +196,9 @@ export function makeRouter({ tools, docker }) {
     if (mode === "deepsearch") {
       return finish((await deepSearch(message, tools.find(t => t.name === "browser"))).synthesis);
     }
-    await streamChat(res, agent, ctx, tools);
+    // streamed chats are remembered too (they used to be forgotten)
+    const text = await streamChat(res, agent, ctx, tools, { fallback: () => runAgent(agent, ctx, tools) });
+    if (text) { await remember(session, "user", message); await remember(session, "assistant", text); }
   });
 
   // ---------- tools / RAG / vision / voice / tasks / images ----------

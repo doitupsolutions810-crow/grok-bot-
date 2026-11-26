@@ -84,6 +84,9 @@ export function recentFeedback(limit = 5) {
 
 // SSE plumbing for orchestrated modes (squad/deep stream {note} progress lines)
 export function sseStart(res) {
+  // idempotent: /chat/stream opens the stream before picking a mode, and streamChat opens it
+  // again — the second writeHead threw ERR_HTTP_HEADERS_SENT and killed plain streaming chat
+  if (res.headersSent) return;
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
 }
 export function sseNote(res, obj) {
@@ -95,15 +98,31 @@ export function sseDone(res) {
 }
 
 // Real streaming: pipe Ollama's token stream straight to the client
-export async function streamChat(res, agent, message, tools) {
+export async function streamChat(res, agent, message, tools, { fallback } = {}) {
   sseStart(res);
-  const stream = await chatRoute([
-    { role: "system", content: agent.systemPrompt || "You are a helpful AI teammate." },
-    { role: "user", content: message }
-  ], tools, { mode: agent.mode || "chat", stream: true, model: agent.model || "" });
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content || "";
-    if (delta) sseNote(res, { delta });
+  let text = "", sawToolCalls = false, gone = false;
+  res.on?.("close", () => { if (!res.writableEnded) gone = true; });   // client hung up
+  try {
+    const stream = await chatRoute([
+      { role: "system", content: agent.systemPrompt || "You are a helpful AI teammate." },
+      { role: "user", content: message }
+    ], tools, { mode: agent.mode || "chat", stream: true, model: agent.model || "" });
+    for await (const chunk of stream) {
+      if (gone) break;                       // stop generating for nobody
+      const d = chunk?.choices?.[0]?.delta;
+      if (d?.tool_calls?.length) sawToolCalls = true;
+      if (d?.content) { text += d.content; sseNote(res, { delta: d.content }); }
+    }
+    // the model chose tools instead of talking: run the real agent loop and send its answer
+    if (!gone && !text && sawToolCalls && fallback) {
+      const answer = await fallback();
+      text = typeof answer === "string" ? answer : JSON.stringify(answer);
+      sseNote(res, { delta: text });
+    }
+  } catch (e) {
+    // headers are already sent, so errors must travel inside the stream (never a hung socket)
+    sseNote(res, { error: e.message, delta: `stream failed: ${e.message}` });
   }
-  sseDone(res);
+  if (!res.writableEnded) sseDone(res);
+  return text;
 }

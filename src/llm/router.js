@@ -1,7 +1,9 @@
 import OpenAI from "openai";
 
-const CHAIN = process.env.MODEL_CHAIN
-  ? process.env.MODEL_CHAIN.split(",").map(s => s.trim()).filter(Boolean)
+const PARSED = String(process.env.MODEL_CHAIN || "").split(",").map(s => s.trim()).filter(Boolean);
+// MODEL_CHAIN=" , " used to leave an empty chain and chatRoute threw `undefined`
+const CHAIN = PARSED.length
+  ? PARSED
   : [
       process.env.LLM_MODEL || "llama3.1:8b",   // primary
       "llama3.2:3b",                             // fallback 1 (smaller, always loadable)
@@ -32,8 +34,12 @@ export async function chatRoute(messages, tools = [], { mode = "chat", stream = 
         type: "function", function: { name: t.name, description: t.description, parameters: t.parameters }
       }));
       const res = await client(model).chat.completions.create(params);
-      return stream ? res : res.choices[0].message;
+      if (stream) return res;
+      const msg = res?.choices?.[0]?.message;
+      // an empty/garbled completion is a failure of this model — try the next one
+      if (!msg) throw new Error("empty completion (no choices)");
+      return msg;
     } catch (e) { lastErr = e; console.warn(`[llm-router] ${model} failed (${e.message}), falling back`); }
   }
-  throw lastErr;
+  throw lastErr || new Error("no models configured");
 }

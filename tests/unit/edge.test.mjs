@@ -1704,3 +1704,25 @@ test("mcp.remote with the real netguard refuses private, metadata and credential
     assert.match(r.error || "", /could not reach MCP server/, u);
   }
 });
+
+// ================= round 22: proof of execution lives in the Lattice, not in the model's wording =================
+test("live-test proof: a terminal call's real output is in the Lattice even when the answer never says 'Linux'", async () => {
+  const lat = await import("../../src/agents/lattice.js");
+  const since = lat.events({ limit: 1 }).at(-1)?.id || 0;
+  replyQueue = [
+    { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "terminal", arguments: '{"command":"uname -a"}' } }] },
+    { role: "assistant", content: "The kernel version of the sandbox is 7.0.0-1014-aws." }      // run 45777756622, verbatim shape
+  ];
+  const agent = { ...mods.registry.findAgent("grok-main"), review: false, tools: ["*"] };
+  const tools = [{ name: "terminal", description: "run a shell command", run: async () => ({ stdout: "Linux fv-az 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP x86_64 GNU/Linux\n", code: 0 }) }];
+  const answer = await mods.runtime.runAgent(agent, "Run `uname -a` with the terminal tool and tell me the kernel version.", tools, { agentName: "grok-main" });
+  assert.doesNotMatch(answer, /linux/i, "the old live assertion would have failed this honest run");
+  const res = lat.events({ agent: "grok-main", kind: "tool_result", since });
+  const ran = res.find(e => /^terminal: /.test(e.text) && /linux/i.test(e.text));
+  assert.ok(ran, "the terminal's output is recorded as proof");
+  const kernel = ran.text.match(/\b\d+\.\d+\.\d+[-\w.]*/)[0];
+  assert.ok(answer.includes(kernel.split("-")[0]), "and the answer reports the kernel it really saw");
+  const src = readFileSync(new URL("../live.test.js", import.meta.url), "utf8");
+  assert.match(src, /kind=tool_result&since=/); assert.doesNotMatch(src, /if \(!\/linux\/i\.test\(res\.answer\)\)/);
+  replyQueue = [];
+});

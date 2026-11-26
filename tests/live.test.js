@@ -40,11 +40,19 @@ const results = [
     `${r.selftest.length}/${r.selftest.length} subsystems live`),
 
   await test("LLM live tool-call: terminal", async () => {
+    // Proof is the terminal's own output in the Lattice, not the model's wording: in run
+    // 45777756622 the agent really ran uname (its answer quoted kernel 7.0.0-1014-aws) yet
+    // never said "Linux", and the old answer-regex failed it.
+    const since = ((await fetch(`${BASE}/api/lattice/events?limit=1`).then(j)).events || []).at(-1)?.id || 0;
     const res = await post("/chat", {
-      agentId: "grok-main", message: "Run `uname -a` in the sandbox and tell me the kernel version."
+      agentId: "grok-main", message: "Run `uname -a` in the sandbox with the terminal tool and tell me the kernel version."
     }).then(j);
-    if (!/linux/i.test(res.answer)) throw new Error(res.answer);
-    return "agent really executed the command";
+    const results = (await fetch(`${BASE}/api/lattice/events?agent=grok-main&kind=tool_result&since=${since}&limit=200`).then(j)).events || [];
+    const ran = results.find(e => /^terminal: /.test(e.text) && /linux/i.test(e.text));
+    if (!ran) throw new Error(`no terminal output from uname: ${res.answer}`);
+    const kernel = (ran.text.match(/\b\d+\.\d+\.\d+[-\w.]*/) || [""])[0];
+    if (kernel && !res.answer.includes(kernel.split("-")[0])) throw new Error(`ran uname (kernel ${kernel}) but the answer does not report it: ${res.answer}`);
+    return `agent really executed uname${kernel ? ` (kernel ${kernel})` : ""}`;
   }),
 
   await test("teammate CRUD round-trip", async () => {

@@ -16,7 +16,8 @@ import { imagegenTool } from "./tools/imagegen.js";
 import { visionTool } from "./tools/vision.js";
 import { taskBoardTool } from "./agents/taskboard.js";
 import { teamAskTool } from "./agents/team.js";
-import { dialogueTools } from "./agents/dialogue.js";
+import { dialogueTools, council, knowledge as teamKnowledge } from "./agents/dialogue.js";
+import * as lattice from "./agents/lattice.js";
 import { nodeTools } from "./agents/nodes.js";
 import { getAgent } from "./agents/registry.js";
 import { spawnTool } from "./tools/spawn.js";
@@ -80,6 +81,11 @@ async function main() {
     ready: test.ok, degraded: !test.ok, tools: tools.map(t => t.name), selftest: test.results
   }));
   app.use(express.static("public"));       // web console (public/index.html)
+
+  // 9. The Lattice: restore the agents' thought/communication log, start autonomous growth if enabled
+  console.log(`[boot] lattice restored ${lattice.load()} events`);
+  if (lattice.startAutonomy({ council, runAgent, tools, getAgent, knowledge: teamKnowledge }))
+    console.log(`[boot] lattice autonomy on: a growth council every ${lattice.status().intervalMin} min`);
 
   app.listen(PORT, () => console.log(`[boot] Grok Bot fully live on :${PORT}`));
 }

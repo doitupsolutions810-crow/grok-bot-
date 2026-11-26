@@ -24,6 +24,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS dialogue_to ON dialogue(to_agent, id);
 `);
 
+import * as lattice from "./lattice.js";
 export const KINDS = ["ask", "answer", "note", "eureka", "human"];
 const MAX_TEXT = 4000;
 const MAX_ROWS = 20_000;     // the channel is a rolling window, not an unbounded log
@@ -44,6 +45,7 @@ export function post({ from, to = "*", kind = "note", text, runId = "" } = {}) {
   const info = db.prepare("INSERT INTO dialogue (ts, run_id, from_agent, to_agent, kind, text) VALUES (datetime('now'),?,?,?,?,?)")
     .run(clean(runId, 128), name(from), to === "*" ? "*" : name(to), kind, body);
   const id = Number(info.lastInsertRowid);
+  lattice.record("say", { agent: name(from), to: to === "*" ? "*" : name(to), runId, text: body, data: { kind } });
   if (id % 500 === 0) db.prepare("DELETE FROM dialogue WHERE id <= ?").run(id - MAX_ROWS);
   // every EUREKA: line in any message is also filed on the knowledge board
   for (const m of body.matchAll(/^\s*EUREKA:\s*(.+)$/gim)) addKnowledge(from, m[1], runId);
@@ -57,6 +59,7 @@ export function addKnowledge(agent, text, runId = "") {
   // the same insight twice is one insight
   if (db.prepare("SELECT 1 FROM knowledge WHERE lower(text)=lower(?)").get(t)) return null;
   const info = db.prepare("INSERT INTO knowledge (ts, agent, text, run_id) VALUES (datetime('now'),?,?,?)").run(name(agent), t, clean(runId, 128));
+  lattice.record("eureka", { agent: name(agent), runId, text: t });
   return Number(info.lastInsertRowid);
 }
 

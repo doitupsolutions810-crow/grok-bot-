@@ -956,3 +956,80 @@ test("nodes: agent API accepts node config, rejects bad resources/env/mcp; spawn
   assert.equal(docker.created.length, 1); assert.match(docker.created[0].name, /^grok-node-grok-main-spawn1-/);
   assert.deepEqual(docker.removed, [docker.created[0].name]);
 });
+
+// ================= round 12: the Lattice (follow agents' thinking + autonomous growth) =================
+test("lattice: a real agent run is followable — prompt, thought, tool call (secrets redacted), result, answer", async () => {
+  const lattice = await import("../../src/agents/lattice.js");
+  lattice.reset();
+  replyQueue = [
+    { role: "assistant", content: "I should check the page first.", tool_calls: [{ id: "L1", type: "function", function: { name: "probe", arguments: '{"url":"https://x.test","apiKey":"sk-live-123"}' } }] },
+    { role: "assistant", content: "The page is up." }
+  ];
+  const { runAgent } = await import("../../src/agents/runtime.js");
+  const out = await runAgent({ id: "lat-a", tools: ["*"], systemPrompt: "You watch pages." }, "Is it up?", [{ name: "probe", run: async () => ({ status: 200 }) }], { runId: "lat-run" });
+  assert.equal(out, "The page is up.");
+  const ev = lattice.events({ agent: "lat-a" });
+  assert.deepEqual(ev.map(e => e.kind), ["prompt", "thought", "tool_call", "tool_result", "answer"]);
+  assert.equal(ev[2].data.args.apiKey, "***"); assert.equal(ev[2].data.args.url, "https://x.test");
+  assert.equal(ev[3].data.ok, true); assert.equal(ev[0].data.system, "You watch pages.");
+  assert.ok(ev.every(e => e.runId === "lat-run"));
+  assert.deepEqual(lattice.events({ agent: "lat-a", kind: "thought,answer" }).map(e => e.kind), ["thought", "answer"]);
+  assert.equal(lattice.events({ q: "PAGE IS UP" }).length, 1);
+  assert.equal(lattice.events({ since: ev.at(-1).id }).length, 0);
+});
+
+test("lattice: dialogue + eurekas feed it; graph shows who talks to whom; survives restart; bogus kinds ignored", async () => {
+  const lattice = await import("../../src/agents/lattice.js");
+  const dlg = await import("../../src/agents/dialogue.js");
+  lattice.reset();
+  dlg.post({ from: "alpha", to: "beta", kind: "ask", text: "Can you verify the cache?\nEUREKA: Lattice edges count directed messages." });
+  dlg.post({ from: "beta", to: "alpha", kind: "answer", text: "Verified." });
+  dlg.post({ from: "alpha", to: "beta", kind: "note", text: "Thanks." });
+  const g = lattice.graph();
+  assert.deepEqual(g.edges.find(e => e.from === "alpha" && e.to === "beta").count, 2);
+  assert.equal(g.nodes.find(n => n.id === "alpha").eurekas, 1);
+  assert.equal(lattice.record("nonsense", { agent: "x" }), null);
+  const before = lattice.events({}).length;
+  assert.equal(lattice.load(), before);                    // reload from the JSONL file
+  assert.equal(lattice.events({ kind: "eureka" })[0].text, "Lattice edges count directed messages.");
+  assert.equal(lattice.redact({ nested: { password: "p", ok: "x".repeat(700) } }).nested.password, "***");
+});
+
+test("lattice API: events, agent timeline, graph, live SSE follow, grow validation + daily cap + no overlap", async () => {
+  const lattice = await import("../../src/agents/lattice.js");
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json());
+  app.use("/api", makeRouter({ tools: [], docker: { listContainers: async () => [] } }));
+  const s = app.listen(0); s.unref();
+  const lbase = `http://127.0.0.1:${s.address().port}/api`;
+  const call = (method, path, body) => fetch(lbase + path, { method, headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body) }).then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
+  lattice.reset();
+  lattice.record("say", { agent: "gamma", to: "delta", text: "hello delta" });
+  assert.equal((await call("GET", "/lattice/events?agent=gamma")).body.events.length, 1);
+  assert.equal((await call("GET", "/lattice/agents/delta")).body.events[0].text, "hello delta");
+  assert.ok((await call("GET", "/lattice/graph")).body.edges.length >= 1);
+  // live stream: backlog then a new event, filtered by agent
+  const ctrl = new AbortController();
+  const res = await fetch(`${lbase}/lattice/stream?agent=gamma`, { signal: ctrl.signal });
+  const reader = res.body.getReader(); let buf = "";
+  const until = async re => { while (!re.test(buf)) buf += new TextDecoder().decode((await reader.read()).value); };
+  await until(/hello delta/);
+  lattice.record("thought", { agent: "other", text: "not for gamma" });
+  lattice.record("eureka", { agent: "gamma", text: "streamed live" });
+  await until(/streamed live/);
+  assert.ok(!buf.includes("not for gamma"));
+  ctrl.abort();
+  assert.equal((await call("POST", "/lattice/grow", { agents: ["nope"] })).status, 400);
+  // growOnce: cap + overlap guard, and the topic builds on discoveries and failures
+  let release; const slow = new Promise(r => release = r);
+  const deps = { council: async () => { await slow; return { runId: "g1", dialogue: [1, 2] }; }, knowledge: () => [{ text: "A", agent: "x" }], runAgent() {}, tools: [], getAgent() {} };
+  process.env.LATTICE_MAX_CYCLES_PER_DAY = "1";
+  const p = lattice.growOnce(deps);
+  assert.match((await lattice.growOnce(deps)).skipped, /already running/);
+  release(); assert.equal((await p).turns, 2);
+  assert.match((await lattice.growOnce(deps)).skipped, /daily limit/);
+  delete process.env.LATTICE_MAX_CYCLES_PER_DAY;
+  const t = lattice.nextTopic([{ text: "cache is stale", agent: "a" }], [{ agent: "b", text: "tool timeout" }]);
+  assert.match(t, /cache is stale \(a\)/); assert.match(t, /b: tool timeout/);
+});

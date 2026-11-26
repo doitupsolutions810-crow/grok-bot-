@@ -36,6 +36,9 @@ services:
       ALLOWED_TERMINAL_CONTAINERS: grok-sandbox
       AGENT_NODES: ${AGENT_NODES:-true}        # every agent gets its own container node (node.* tools)
       AGENT_NODE_IMAGE: ${AGENT_NODE_IMAGE:-ubuntu:24.04}
+      LATTICE_AUTONOMY: ${LATTICE_AUTONOMY:-true}        # agents keep convening on their own discoveries
+      LATTICE_INTERVAL_MIN: ${LATTICE_INTERVAL_MIN:-30}
+      LATTICE_MAX_CYCLES_PER_DAY: ${LATTICE_MAX_CYCLES_PER_DAY:-24}
       BOOT_STRICT: ${BOOT_STRICT:-true}
       # Governor (Avrone) — health-gated parallelism
       GROK_MAX_PARALLEL: ${GROK_MAX_PARALLEL:-4}

@@ -16,6 +16,7 @@ import { pending, decide, takeHeld, approvalStatus, needsReview } from "./middle
 import { resumeHeld } from "./agents/runtime.js";
 import { getAgent } from "./agents/registry.js";
 import * as nodes from "./agents/nodes.js";
+import * as lattice from "./agents/lattice.js";
 import { post as postDialogue, feed as dialogueFeed, knowledge as teamKnowledge, council, KINDS } from "./agents/dialogue.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
@@ -272,6 +273,36 @@ export function makeRouter({ tools, docker }) {
     if (unknown.length) return res.status(404).json({ error: `unknown agents: ${unknown.join(", ")}` });
     try { res.json(await council({ topic, agents: names, rounds, runAgent, tools: tools || [], getAgent })); }
     catch (e) { res.status(502).json({ error: e.message }); }
+  });
+  // ---------- the Lattice: follow every agent's prompts, thoughts, tools and talk ----------
+  const latticeQuery = q => ({ agent: q.agent, kind: q.kind, runId: q.runId, since: q.since, q: q.q, limit: q.limit });
+  r.get("/lattice/events", (req, res) => res.json({ events: lattice.events(latticeQuery(req.query)) }));
+  r.get("/lattice/graph", (_req, res) => res.json(lattice.graph()));
+  r.get("/lattice/status", (_req, res) => res.json(lattice.status()));
+  r.get("/lattice/agents/:id", (req, res) => {
+    const tl = lattice.events({ ...latticeQuery(req.query), agent: req.params.id });
+    res.json({ agent: req.params.id, events: tl, discoveries: tl.filter(e => e.kind === "eureka").map(e => e.text) });
+  });
+  r.get("/lattice/stream", (req, res) => {       // live follow over SSE, optionally one agent/kind
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    const f = latticeQuery(req.query);
+    for (const e of lattice.events({ ...f, limit: Math.min(Number(f.limit) || 50, 500) })) res.write(`data: ${JSON.stringify(e)}\n\n`);
+    const kinds = f.kind ? String(f.kind).split(",") : null;
+    const off = lattice.subscribe(e => {
+      if (f.agent && e.agent !== f.agent && e.to !== f.agent) return;
+      if (kinds && !kinds.includes(e.kind)) return;
+      if (f.runId && e.runId !== f.runId) return;
+      res.write(`data: ${JSON.stringify(e)}\n\n`);
+    });
+    const ping = setInterval(() => res.write(": ping\n\n"), 15_000); ping.unref?.();
+    req.on("close", () => { off(); clearInterval(ping); });
+  });
+  r.post("/lattice/grow", async (req, res) => {   // one autonomous growth cycle now
+    const names = req.body?.agents;
+    if (names !== undefined && (!Array.isArray(names) || names.some(n => typeof n !== "string" || !getAgent(n))))
+      return res.status(400).json({ error: "agents must be a list of known agent ids" });
+    const out = await lattice.growOnce({ council, runAgent, tools: tools || [], getAgent, knowledge: teamKnowledge, agents: names });
+    res.status(out.skipped ? 409 : out.ok ? 200 : 502).json(out);
   });
   // ---------- agent nodes: one machine per agent ----------
   r.get("/nodes", async (_req, res) => {

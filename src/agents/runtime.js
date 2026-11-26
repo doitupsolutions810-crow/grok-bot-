@@ -8,6 +8,7 @@ import { chatRoute } from "../llm/router.js";
 import { teamContext } from "./dialogue.js";
 import { needsReview, createApproval, saveHeld } from "../middleware/approvals.js";
 import { emit } from "./codex.js";
+import * as lattice from "./lattice.js";
 
 function parseArgs(call) {
   let a;
@@ -22,6 +23,7 @@ async function execTool(available, name, args, ctx, runId) {
   try { result = tool ? await tool.run(args, ctx) : { error: `unknown tool: ${name}` }; }
   catch (e) { result = { error: e.message }; }
   emit(runId, "tool.result", { agent: ctx?.agent, tool: name, ok: !result?.error });
+  lattice.record("tool_result", { agent: ctx?.agent, runId, text: `${name}: ${result?.error ? "error: " + result.error : JSON.stringify(result ?? null)}`, data: { tool: name, ok: !result?.error } });
   return result;
 }
 
@@ -34,6 +36,7 @@ async function runCalls(agent, calls, available, messages, ctx, opts) {
     const name = call?.function?.name || "";
     const args = parseArgs(call);
     emit(opts.runId, "tool.call", { agent: ctx?.agent, tool: name });
+    lattice.record("tool_call", { agent: ctx?.agent, runId: opts.runId, text: name, data: { tool: name, args } });
     if (agent.review && needsReview(name, args)) {
       const id = createApproval(agent.id, name, args);
       saveHeld(id, { agent, call, rest: calls.slice(i + 1), messages, tools: available, ctx, maxSteps: opts.maxSteps });
@@ -69,10 +72,21 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     ? tools
     : tools.filter(t => ALWAYS.has(t.name) || agent.tools?.includes(t.name) || agent.tools?.includes(t.name.split(".")[0]));
 
-  for (let step = 0; step < maxSteps; step++) {
-    const reply = await chatRoute(messages, available, { mode: agent.mode || "chat", model: agent.model || "" });
+  // the Lattice follows every agent: what it was asked, what it thinks, what it does
+  if (!resume) lattice.record("prompt", { agent: ctx.agent, runId: opts.runId, text: String(userMessage ?? ""),
+    data: { system: String(agent.systemPrompt || "").slice(0, 300), tools: available.map(t => t.name) } });
 
-    if (!reply.tool_calls?.length) return reply.content;   // final answer
+  for (let step = 0; step < maxSteps; step++) {
+    let reply;
+    try { reply = await chatRoute(messages, available, { mode: agent.mode || "chat", model: agent.model || "" }); }
+    catch (e) { lattice.record("error", { agent: ctx.agent, runId: opts.runId, text: `model call failed: ${e.message}` }); throw e; }
+
+    if (!reply.tool_calls?.length) {                         // final answer
+      lattice.record("answer", { agent: ctx.agent, runId: opts.runId, text: reply.content ?? "" });
+      return reply.content;
+    }
+    if (typeof reply.content === "string" && reply.content.trim())
+      lattice.record("thought", { agent: ctx.agent, runId: opts.runId, text: reply.content });
 
     messages.push(reply);
     emit(opts.runId, "agent.message", { agent: ctx.agent, calls: reply.tool_calls.length });

@@ -16,6 +16,7 @@ jobs:
       LLM_MODEL: qwen2.5:3b
       MODELS_REQUIRED: qwen2.5:3b,nomic-embed-text
       BOOT_STRICT: "true"
+      LATTICE_AUTONOMY: "false"     # growth cycles would compete with the tests for the runner's CPU
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +96,22 @@ jobs:
             // annotations are readable through the API without downloading logs
             for (const m of c.dialogue.slice(0, 8)) console.log(`::notice title=council ${m.from}::${m.text.replace(/\s+/g, " ").replace(/%/g, "%25").slice(0, 600)}`);
             for (const e of c.eurekas.slice(0, 2)) console.log(`::notice title=eureka ${e.agent}::${e.text.replace(/\s+/g, " ").replace(/%/g, "%25").slice(0, 400)}`);
+          '
+
+      - name: Lattice (follow the council agents' prompts, thoughts, tool calls and messages)
+        run: |
+          curl -fsS "http://localhost:3000/api/lattice/events?kind=thought,tool_call,tool_result,say,eureka&limit=400" -o lattice.json
+          curl -fsS http://localhost:3000/api/lattice/graph -o graph.json
+          node -e '
+            const ev = require("./lattice.json").events, g = require("./graph.json"), fs = require("fs");
+            const esc = s => String(s).replace(/\s+/g, " ").replace(/%/g, "%25");
+            const md = ["## Lattice: how the agents thought and talked", "| # | agent | kind | text |", "|---|---|---|---|",
+              ...ev.slice(-60).map(e => `| ${e.id} | ${e.agent}${e.to ? " → " + e.to : ""} | ${e.kind} | ${esc(e.text).replace(/\|/g, "/").slice(0, 300)} |`),
+              "", "### Who talks to whom", ...g.edges.map(x => `- ${x.from} → ${x.to}: ${x.count} message(s)`)];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n") + "\n");
+            for (const e of ev.filter(e => e.kind === "thought" || e.kind === "tool_call").slice(-6))
+              console.log(`::notice title=lattice ${e.agent} ${e.kind}::${esc(e.text).slice(0, 500)}`);
+            console.log(`lattice: ${ev.length} events, ${g.nodes.length} agents, ${g.edges.length} edges`);
           '
 
       - name: Agents' evolution loop (writes EVOLVE.md from the live runs)

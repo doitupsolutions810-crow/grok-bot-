@@ -2,7 +2,7 @@
 // Teammates created in the console are written here and hot-reloaded, so every
 // subsystem (router, team dispatch, spawn) sees the same live roster.
 
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync } from "node:fs";
 
 const FILE = () => process.env.AGENTS_FILE || "/app/config/agents.json";
 
@@ -10,9 +10,28 @@ let cache = null;
 
 // Read tolerates a missing file (fresh install) and writes are atomic
 // (tmp + rename) so a crash mid-save can never leave a half-written roster.
+let lastGood = null;
 export function readConfig() {
   if (!existsSync(FILE())) return { agents: [], bots: [], mcpServers: {} };
-  return JSON.parse(readFileSync(FILE(), "utf-8"));
+  const raw = readFileSync(FILE(), "utf-8");
+  let cfg;
+  try { cfg = JSON.parse(raw); }
+  catch (e) {
+    // A hand-edited or truncated roster must not take every agent down: keep a copy of
+    // the broken file and keep serving the last good roster (or an empty one).
+    const bak = `${FILE()}.corrupt-${Date.now()}`;
+    try { copyFileSync(FILE(), bak); } catch {}
+    console.warn(`[registry] ${FILE()} is not valid JSON (${e.message}); saved a copy to ${bak}`);
+    return structuredClone(lastGood || { agents: [], bots: [], mcpServers: {} });
+  }
+  if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
+  if (!Array.isArray(cfg.agents)) cfg.agents = [];
+  if (!Array.isArray(cfg.bots)) cfg.bots = [];
+  cfg.agents = cfg.agents.filter(a => a && typeof a.id === "string");
+  cfg.bots = cfg.bots.filter(b => b && typeof b.id === "string");
+  if (!cfg.mcpServers || typeof cfg.mcpServers !== "object") cfg.mcpServers = {};
+  lastGood = structuredClone(cfg);
+  return cfg;
 }
 export function writeConfig(cfg) {
   const tmp = `${FILE()}.tmp-${process.pid}`;

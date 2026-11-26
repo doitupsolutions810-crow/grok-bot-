@@ -38,9 +38,16 @@ export function addTask({ name, cron: expr, agent, prompt } = {}) {
   return id;
 }
 
+const running = new Set();
 export async function runTask(id) {
   const t = db.prepare("SELECT * FROM tasks WHERE id=?").get(Number(id));
   if (!t) return null;
+  // a slow run must not stack: skip the tick while the previous run is still going
+  if (running.has(t.id)) return t.id;
+  running.add(t.id);
+  try { return await runTaskNow(t); } finally { running.delete(t.id); }
+}
+async function runTaskNow(t) {
   let answer;
   try { answer = await onRun(t.agent, t.prompt); }
   catch (e) { answer = `error: ${e.message}`; }

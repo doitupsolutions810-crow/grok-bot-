@@ -20,7 +20,7 @@ const ALL_TOOLS = [
 ];
 const FIELDS = ["name", "job", "instructions", "model", "tools", "mode", "trigger", "emoji", "review"];
 const LIMITS = { name: 64, job: 1000, instructions: 8000, emoji: 16 };
-const MAX_AGENTS = Number(process.env.MAX_AGENTS) || 200;
+const MAX_AGENTS = (() => { const n = Number(process.env.MAX_AGENTS); return Number.isFinite(n) && process.env.MAX_AGENTS !== "" && process.env.MAX_AGENTS != null ? Math.max(0, Math.floor(n)) : 200; })();
 
 export const slug = name => String(name || "").toLowerCase().normalize("NFKD")
   .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);

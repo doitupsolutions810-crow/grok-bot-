@@ -20,11 +20,13 @@ import {
 import { transcribe, speak } from "./voice/voice.js";
 import { visionTool } from "./tools/vision.js";
 
-// RAG may only read project files, never system pseudo-files or app secrets
+// RAG reads project files by default (RAG_ROOTS); secrets need the explicit opt-in below
 export const RAG_ROOTS = (process.env.RAG_ROOTS || "/workspace,/app/docs").split(",").map(x => x.trim()).filter(Boolean);
+// RAG_ALLOW_SECRETS=true lets ingest read any file (env files, keys) — owner opt-in.
 export function ragPath(p) {
   if (typeof p !== "string" || !p || p.includes("\0")) return null;
   const abs = resolvePath(p);
+  if (process.env.RAG_ALLOW_SECRETS === "true") return abs;
   return RAG_ROOTS.some(r => { const root = r.replace(/\/+$/, ""); return abs.startsWith(root + "/"); }) ? abs : null;
 }
 // deep rounds come from the request body: clamp so one call can't loop for hours

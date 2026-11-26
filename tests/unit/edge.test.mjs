@@ -498,3 +498,57 @@ test("x mentions: handle stripped everywhere, any case, without eating longer ha
   assert.equal(stripMention("@grok_botty hi", "grok_bot"), "@grok_botty hi");
   assert.equal(stripMention("@a.b hi", "a.b"), "hi");
 });
+
+// ================= round 4: roster corruption, caps, scheduler overlap, secrets opt-in =================
+test("corrupt agents.json: keeps serving the last good roster and saves a backup", async () => {
+  const { readdirSync } = await import("node:fs");
+  const good = readFileSync(process.env.AGENTS_FILE, "utf8");
+  mods.registry.reload(); mods.registry.loadAgents();
+  writeFileSync(process.env.AGENTS_FILE, '{"agents": [ {"id": "grok-main"');   // truncated mid-write
+  mods.registry.reload();
+  const a = mods.registry.loadAgents();
+  assert.ok(a.agents["grok-main"], "core agents still served");
+  assert.ok(readdirSync(tmp).some(f => f.startsWith("agents.json.corrupt-")));
+  assert.equal((await call("GET", "/agents")).status, 200);
+  writeFileSync(process.env.AGENTS_FILE, good); mods.registry.reload();
+});
+
+test("roster with wrong shapes (bots not an array, null entries) is normalized", () => {
+  const good = readFileSync(process.env.AGENTS_FILE, "utf8");
+  writeFileSync(process.env.AGENTS_FILE, JSON.stringify({ agents: [null, { id: "grok-main", name: "G" }, 5], bots: { no: 1 } }));
+  mods.registry.reload();
+  const a = mods.registry.loadAgents();
+  assert.deepEqual(Object.keys(a.agents), ["grok-main"]);
+  assert.deepEqual(a.bots, []);
+  writeFileSync(process.env.AGENTS_FILE, good); mods.registry.reload();
+});
+
+test("scheduler: a slow run never stacks a second concurrent run of the same task", async () => {
+  let live = 0, peak = 0;
+  mods.scheduler.setTaskRunner(async () => { live++; peak = Math.max(peak, live); await new Promise(r => setTimeout(r, 80)); live--; return "ok"; });
+  const id = mods.scheduler.addTask({ cron: "0 0 1 1 *", prompt: "slow" });
+  await Promise.all([mods.scheduler.runTask(id), mods.scheduler.runTask(id), mods.scheduler.runTask(id)]);
+  assert.equal(peak, 1);
+  mods.scheduler.deleteTask(id);
+});
+
+test("RAG secrets: blocked by default, allowed only with RAG_ALLOW_SECRETS=true", async () => {
+  const { ragPath } = await import("../../src/router.js");
+  delete process.env.RAG_ALLOW_SECRETS;
+  assert.equal(ragPath("/app/.env"), null);
+  assert.equal(ragPath("/workspace/notes.md"), "/workspace/notes.md");
+  process.env.RAG_ALLOW_SECRETS = "true";
+  assert.equal(ragPath("/app/.env"), "/app/.env");
+  assert.equal(ragPath("relative\0bad"), null);
+  delete process.env.RAG_ALLOW_SECRETS;
+});
+
+test("custom agents: name + instructions survive a restart-style reload and reach the model", async () => {
+  await call("POST", "/agents", { name: "Night Shift", instructions: "Sign every answer with NS." });
+  mods.registry.reload();
+  const a = mods.registry.getAgent("night-shift");
+  assert.match(a.systemPrompt, /Night Shift/); assert.match(a.systemPrompt, /Sign every answer with NS\./);
+  seen.length = 0;
+  await mods.runtime.runAgent(a, "hi", []);
+  assert.match(seen.at(-1).messages[0].content, /Sign every answer with NS/);
+});

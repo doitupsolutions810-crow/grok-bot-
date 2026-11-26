@@ -1841,3 +1841,52 @@ test("API errors are JSON: a throwing route and a malformed body never leak an H
   assert.ok(logs.some(l => l.includes("agents.json.tmp")), "the detail goes to the server log");
   s.close();
 });
+
+// ================= round 28: found in the live Ollama session (03:23-03:33 EST) =================
+test("knowledge board keeps findings only: plans, invitations, 'no discoveries' and rewordings are not eurekas", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  // verbatim from the live session's knowledge board, which kept all nine
+  const plans = [
+    "No recent discoveries indicate a specific edge case that needs testing. Let's brainstorm some potential edge cases together.",
+    "We should also consider edge cases where the agent creation process might fail silently or inconsistently.",
+    "I propose we also consider edge cases where the system might fail inconsistently, such as when the input fields are not filled correctly.",
+    "Let's also propose a new skill to handle edge cases more robustly.",
+    "I will start by testing the agent creation process with invalid inputs and simulate a high load scenario.",
+    "Which edge case should we test next?",
+    "ok",
+  ];
+  for (const p of plans) assert.equal(D.isFinding(p), false, p);
+  const tag = `r28-${Date.now()}`;
+  const kept = D.addKnowledge("grok-scout", `Agent create with an unwritable config returned an HTML stack trace (${tag}).`);
+  assert.ok(kept, "a stated finding is kept");
+  assert.equal(D.addKnowledge("edge-critic", `Agent create with an unwritable config returned a HTML stack trace (${tag})`), null, "a rewording is the same finding");
+  assert.ok(D.addKnowledge("grok-main", `Malformed JSON bodies were answered with Express's default HTML page (${tag}-b).`), "a different finding is kept");
+  assert.ok(D.similar("a b c", "x y z") === 0 && D.similar("same words here", "same words here") === 1);
+});
+
+test("LLM router skips a model the backend reported missing instead of retrying it on every call", async () => {
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    let b = ""; req.on("data", c => b += c); req.on("end", () => {
+      const model = JSON.parse(b || "{}").model; seen.push(model);
+      if (model !== "have:1b") { res.writeHead(404, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: `model '${model}' not found` } })); }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "hi" } }] }));
+    });
+  });
+  await new Promise(r => srv.listen(0, r)); srv.unref();
+  const saved = { u: process.env.OLLAMA_URL, c: process.env.MODEL_CHAIN };
+  process.env.OLLAMA_URL = `http://127.0.0.1:${srv.address().port}`;
+  process.env.MODEL_CHAIN = "have:1b,gone:3b,gone:1b";
+  const R = await import(`../../src/llm/router.js?r28=${Date.now()}`);
+  assert.equal((await R.chatRoute([{ role: "user", content: "x" }], [], { mode: "chat" })).content, "hi");
+  const first = seen.length;
+  assert.deepEqual(seen, ["gone:1b", "gone:3b", "have:1b"], "chat mode walks the chain fast-first");
+  seen.length = 0;
+  await R.chatRoute([{ role: "user", content: "x" }], [], { mode: "chat" });
+  assert.deepEqual(seen, ["have:1b"], "the two missing models are not asked again");
+  assert.ok(first === 3 && R._missing.has("gone:3b"));
+  process.env.OLLAMA_URL = saved.u ?? ""; if (!saved.u) delete process.env.OLLAMA_URL;
+  if (saved.c === undefined) delete process.env.MODEL_CHAIN; else process.env.MODEL_CHAIN = saved.c;
+  srv.close();
+});

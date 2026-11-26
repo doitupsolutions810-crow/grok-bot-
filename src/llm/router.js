@@ -10,6 +10,15 @@ const CHAIN = PARSED.length
       "llama3.2:1b"                              // last resort
     ];
 
+// A model the backend says it doesn't have is skipped for a while instead of being retried
+// on every call. Seen live: each chat turn first tried llama3.2:1b and llama3.2:3b (both 404)
+// before reaching the configured model.
+const MISSING_MS = Number(process.env.MODEL_MISSING_TTL_MS) || 10 * 60_000;
+const missing = new Map();
+export const _missing = missing;
+const isMissing = m => { const t = missing.get(m); if (t && Date.now() - t < MISSING_MS) return true; missing.delete(m); return false; };
+const notFound = e => e?.status === 404 || /model .{0,80}not found|404/i.test(String(e?.message));
+
 const clients = {};
 function client(model) {
   clients[model] ??= new OpenAI({
@@ -25,7 +34,9 @@ function client(model) {
 export async function chatRoute(messages, tools = [], { mode = "chat", stream = false, model: preferred = "" } = {}) {
   const base = mode === "chat" ? CHAIN.slice().reverse() : CHAIN.slice(); // chat = fast-first; heavy = big-first
   // An agent's own model goes first; the chain stays as fallback. De-duplicated.
-  const order = [...new Set([preferred, ...base].filter(Boolean))];
+  const all = [...new Set([preferred, ...base].filter(Boolean))];
+  const order = all.filter(m => !isMissing(m));
+  if (!order.length) order.push(...all);   // everything marked missing: try again rather than fail blind
   let lastErr;
   for (const model of order) {
     try {
@@ -39,7 +50,7 @@ export async function chatRoute(messages, tools = [], { mode = "chat", stream = 
       // an empty/garbled completion is a failure of this model — try the next one
       if (!msg) throw new Error("empty completion (no choices)");
       return msg;
-    } catch (e) { lastErr = e; console.warn(`[llm-router] ${model} failed (${e.message}), falling back`); }
+    } catch (e) { lastErr = e; if (notFound(e)) missing.set(model, Date.now()); console.warn(`[llm-router] ${model} failed (${e.message}), falling back`); }
   }
   throw lastErr || new Error("no models configured");
 }

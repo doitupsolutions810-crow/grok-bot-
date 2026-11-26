@@ -53,11 +53,35 @@ export function post({ from, to = "*", kind = "note", text, runId = "" } = {}) {
   return id;
 }
 
+// Seen live on qwen2.5:3b: agents prefixed plans ("I will start by testing…"), invitations
+// ("Let's brainstorm…") and even non-findings ("No recent discoveries…") with EUREKA:, and
+// filed near-identical rewordings, flooding the board every prompt reads. A finding states
+// something learned; intentions, requests, questions and "nothing found" are not findings.
+const NOT_A_FINDING = [
+  /^(i|we)\s*(will|'ll|am going to|are going to|plan to|shall)\b/i,
+  /^(let'?s|let us|please|once|next,?|first,?|i propose|we propose|i suggest|we should (start|begin|also consider|consider))\b/i,
+  /\b(no|nothing)\s+(new|recent|specific|notable)?\s*(discover(y|ies)|findings?|insights?)\b/i,
+];
+export function isFinding(t) {
+  const s = String(t || "").trim();
+  if (s.length < 20 || /\?\s*$/.test(s)) return false;
+  return !NOT_A_FINDING.some(re => re.test(s));
+}
+const words = s => new Set(String(s).toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+export function similar(a, b) {
+  const A = words(a), B = words(b);
+  if (!A.size || !B.size) return 0;
+  let n = 0; for (const w of A) if (B.has(w)) n++;
+  return n / (A.size + B.size - n);
+}
+
 export function addKnowledge(agent, text, runId = "") {
   const t = clean(text, 1000);
-  if (!t) return null;
-  // the same insight twice is one insight
+  if (!t || !isFinding(t)) return null;
+  // the same insight twice is one insight, and so is the same insight reworded
   if (db.prepare("SELECT 1 FROM knowledge WHERE lower(text)=lower(?)").get(t)) return null;
+  const recent = db.prepare("SELECT text FROM knowledge ORDER BY id DESC LIMIT 60").all();
+  if (recent.some(r => similar(r.text, t) >= 0.7)) return null;
   const info = db.prepare("INSERT INTO knowledge (ts, agent, text, run_id) VALUES (datetime('now'),?,?,?)").run(name(agent), t, clean(runId, 128));
   lattice.record("eureka", { agent: name(agent), runId, text: t });
   return Number(info.lastInsertRowid);

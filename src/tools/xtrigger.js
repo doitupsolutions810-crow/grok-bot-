@@ -4,6 +4,11 @@
 
 const seen = new Set();
 
+export function stripMention(text, me) {
+  const esc = String(me).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return String(text).replace(new RegExp(`@${esc}\\b`, "gi"), "").replace(/\s+/g, " ").trim();
+}
+
 export function startXTrigger(onTask) {
   const poll = async () => {
     const token = process.env.X_API_BEARER;
@@ -15,9 +20,11 @@ export function startXTrigger(onTask) {
       }).then(r => r.json());
       for (const t of (r.data || [])) {
         const key = `x:${t.id}`;
-        if (seen.has(key)) continue;
+        if (seen.has(key) || typeof t?.text !== "string") continue;
         seen.add(key);
-        onTask(t.text.replace(`@${me}`, "").trim());   // chief-of-staff picks it up as a task
+        if (seen.size > 5000) seen.delete(seen.values().next().value);   // bounded memory, oldest first
+        const text = stripMention(t.text, me);
+        if (text) onTask(text);   // chief-of-staff picks it up as a task
       }
     } catch (e) {
       console.warn(`[x-trigger] poll failed: ${e.message}`);

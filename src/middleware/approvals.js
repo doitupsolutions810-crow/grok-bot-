@@ -11,7 +11,7 @@ const DANGER = process.env.REVIEW_PATTERNS
   : /rm\s+-rf|mkfs|dd\s+if=|curl[^|]*\|\s*(ba)?sh|docker\s+(rm|rmi|kill)|git\s+push\s+--force|shutdown|reboot/i;
 
 export function needsReview(tool, args) {
-  if (tool === "terminal" && DANGER.test(args.command || "")) return true;
+  if (tool === "terminal" && DANGER.test(String(args?.command ?? ""))) return true;
   return ["imagegen", "x.search"].includes(tool) && process.env.REVIEW_SENSITIVE === "true";
 }
 
@@ -27,6 +27,9 @@ export function pending() {
 }
 export function decide(id, approve) {
   db.prepare("UPDATE approvals SET status=? WHERE id=?").run(approve ? "approved" : "rejected", id);
+}
+export function approvalStatus(id) {
+  return db.prepare("SELECT status FROM approvals WHERE id=?").get(id)?.status || null;
 }
 export function isApproved(id) {
   return db.prepare("SELECT status FROM approvals WHERE id=?").get(id)?.status === "approved";

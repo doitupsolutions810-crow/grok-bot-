@@ -158,7 +158,7 @@ export async function runSquad(agent, question, tools, { onNote, runId } = {}) {
 // ---------- DEEP ----------
 export async function runDeep(agent, question, tools, { rounds, firstAnswer, onNote, runId } = {}) {
   runId = runId || newRunId();
-  const maxRounds = rounds || DEEP_ROUNDS();
+  const maxRounds = Math.min(Math.max(1, Math.floor(Number(rounds)) || DEEP_ROUNDS()), 10);
   emit(runId, "run.start", { mode: "deep", question });
 
   // Draft answer: reuse the chat answer if the caller already produced one

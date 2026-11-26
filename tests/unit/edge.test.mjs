@@ -215,8 +215,9 @@ test("approvals: createApproval returns a real numeric id", () => {
 });
 
 test("approval resume uses call.id as tool_call_id", async () => {
-  const src = readFileSync(new URL("../../src/router.js", import.meta.url), "utf8");
-  assert.match(src, /tool_call_id: held\.call\.id/);
+  // resume moved into runtime.resumeHeld; behavior is covered end-to-end by the 3-call batch test
+  const src = readFileSync(new URL("../../src/agents/runtime.js", import.meta.url), "utf8");
+  assert.match(src, /tool_call_id: call\?\.id/);
   assert.doesNotMatch(src, /call\.function\.id/);
 });
 
@@ -371,4 +372,129 @@ test("auth: missing/blank/wrong tokens rejected; Bearer is case-insensitive", as
   assert.equal(run({ authorization: `Bearer ${t}` }), 200);
   assert.equal(run({ authorization: `bearer   ${t}` }), 200);
   assert.equal(run({}, { token: t }), 200);
+});
+
+// ================= round 3: the full HTTP surface (real makeRouter, stub tools) =================
+let api3;
+const ran3 = [];
+async function full() {
+  if (api3) return api3;
+  const { makeRouter } = await import("../../src/router.js");
+  const tools = [
+    { name: "terminal", run: async a => (ran3.push(a.command), { ok: true, stdout: `ran ${a.command}` }) },
+    { name: "boom", run: async () => { throw new Error("tool exploded"); } },
+  ];
+  const app = express();
+  app.use(express.json({ limit: "2mb" }));
+  app.use("/api", makeRouter({ tools, docker: { listContainers: async () => [] } }));
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ errors: [err.message] }));
+  const s = app.listen(0); s.unref();
+  const b = `http://127.0.0.1:${s.address().port}/api`;
+  api3 = (method, path, body) => fetch(b + path, { method, headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body) }).then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
+  return api3;
+}
+const tc = (id, cmd) => ({ id, type: "function", function: { name: "terminal", arguments: JSON.stringify({ command: cmd }) } });
+
+test("HTTP: direct tool invoke can't bypass Auto Review; tool errors are JSON 500s", async () => {
+  const api = await full();
+  assert.equal((await api("POST", "/tools/terminal/invoke", { command: "rm -rf /" })).status, 403);
+  assert.ok(!ran3.includes("rm -rf /"));
+  assert.equal((await api("POST", "/tools/terminal/invoke", { command: "ls" })).status, 200);
+  const e = await api("POST", "/tools/boom/invoke", {});
+  assert.equal(e.status, 500); assert.match(e.body.error, /exploded/);
+  assert.equal((await api("POST", "/tools/nope/invoke", {})).status, 404);
+});
+
+test("HTTP: approval decision validates id, body, existence, and double-decide", async () => {
+  const api = await full();
+  assert.equal((await api("POST", "/approvals/abc/decision", { approve: true })).status, 400);
+  assert.equal((await api("POST", "/approvals/999999/decision", { approve: true })).status, 404);
+  const id = mods.approvals.createApproval("x", "terminal", { command: "rm -rf /tmp/x" });
+  assert.equal((await api("POST", `/approvals/${id}/decision`, { approve: "yes" })).status, 400);
+  assert.equal((await api("POST", `/approvals/${id}/decision`, { approve: false })).status, 200);
+  assert.equal((await api("POST", `/approvals/${id}/decision`, { approve: true })).status, 409);
+});
+
+test("HTTP: a paused batch of 3 calls resumes and answers every tool_call_id", async () => {
+  const api = await full();
+  const agent = { id: "rev", review: true, systemPrompt: "s", tools: ["*"] };
+  const tools = [{ name: "terminal", run: async a => (ran3.push(a.command), { ok: true }) }];
+  replyQueue = [{ role: "assistant", content: null, tool_calls: [tc("c1", "echo a"), tc("c2", "rm -rf /tmp/zz"), tc("c3", "echo c")] }];
+  ran3.length = 0;
+  const out = await mods.runtime.runAgent(agent, "go", tools);
+  assert.ok(out.pendingApproval);
+  assert.deepEqual(ran3, ["echo a"]);
+  seen.length = 0;
+  replyQueue = [{ role: "assistant", content: "all done" }];
+  const r = await api("POST", `/approvals/${out.pendingApproval}/decision`, { approve: true });
+  assert.equal(r.status, 200); assert.equal(r.body.answer, "all done");
+  assert.deepEqual(ran3.slice(-2), ["rm -rf /tmp/zz", "echo c"]);
+  const ids = seen.at(-1).messages.filter(m => m.role === "tool").map(m => m.tool_call_id);
+  assert.deepEqual(ids, ["c1", "c2", "c3"]);
+});
+
+test("HTTP: rejecting a paused call tells the agent and lets it finish", async () => {
+  const api = await full();
+  const agent = { id: "rev", review: true, systemPrompt: "s", tools: ["*"] };
+  replyQueue = [{ role: "assistant", content: null, tool_calls: [tc("r1", "git push --force origin main")] }];
+  const out = await mods.runtime.runAgent(agent, "go", [{ name: "terminal", run: async () => { throw new Error("must not run"); } }]);
+  seen.length = 0;
+  replyQueue = [{ role: "assistant", content: "ok, I won't force-push" }];
+  const r = await api("POST", `/approvals/${out.pendingApproval}/decision`, { approve: false });
+  assert.equal(r.body.resumed, true); assert.match(r.body.answer, /won't/);
+  assert.match(seen.at(-1).messages.at(-1).content, /rejected by human reviewer/);
+});
+
+test("HTTP: RAG ingest refuses paths outside the allowed roots (no env/secret reads)", async () => {
+  const api = await full();
+  for (const p of ["/etc/passwd", "/workspace/../etc/passwd", "/workspacefoo/x", "", 42, null])
+    assert.equal((await api("POST", "/rag/ingest", { path: p })).status, 400, String(p));
+  assert.equal((await api("POST", "/rag/search", {})).status, 400);
+  assert.equal((await api("POST", "/rag/search", { query: ["x"] })).status, 400);
+});
+
+test("HTTP: vision/stt/tasks/feedback reject junk instead of throwing 500s", async () => {
+  const api = await full();
+  assert.equal((await api("POST", "/vision", {})).status, 400);
+  assert.equal((await api("POST", "/voice/stt", { audioBase64: 5 })).status, 400);
+  assert.equal((await api("POST", "/tasks/abc/run")).status, 400);
+  assert.equal((await api("DELETE", "/tasks/1e3")).status, 400);
+  assert.equal((await api("POST", "/tasks/424242/run")).status, 404);
+  assert.equal((await api("POST", "/tasks", { cron: "nope", prompt: "x" })).status, 400);
+  const f = await api("POST", "/feedback", { comment: { evil: true }, good: "no" });
+  assert.equal(f.status, 200); assert.equal(typeof f.body.id, "number");
+  assert.equal((await api("POST", "/chat", { message: 7 })).status, 400);
+  assert.equal((await api("POST", "/chat/stream", { message: "  " })).status, 400);
+  assert.equal((await api("POST", "/x/trigger", { text: "" })).status, 400);
+});
+
+test("HTTP: /chat with an Auto-Review agent that pauses returns the pending id (no SQLite crash)", async () => {
+  const api = await full();
+  await api("POST", "/agents", { name: "Careful Ops", job: "ops", review: true });
+  replyQueue = [{ role: "assistant", content: null, tool_calls: [tc("p1", "rm -rf /tmp/build")] }];
+  const r = await api("POST", "/chat", { agentId: "careful-ops", message: "clean up", session: { weird: 1 } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.answer.pendingApproval > 0);
+});
+
+test("deep rounds from the request are clamped (no 1e9-round loops)", async () => {
+  const { clampRounds } = await import("../../src/router.js");
+  assert.equal(clampRounds(1e9), 10); assert.equal(clampRounds(-5), 1); assert.equal(clampRounds("abc"), 1);
+  assert.equal(clampRounds(undefined), undefined); assert.equal(clampRounds(3), 3);
+});
+
+test("web.fetch refuses non-http protocols, junk URLs and odd methods without fetching", async () => {
+  const { webFetchTool } = await import("../../src/tools/web.js");
+  assert.match((await webFetchTool.run({ url: "file:///etc/passwd" })).error, /protocol/);
+  assert.match((await webFetchTool.run({ url: "not a url" })).error, /invalid/);
+  assert.match((await webFetchTool.run({ url: "http://x", method: "DELETE" })).error, /GET or POST/);
+  assert.match((await webFetchTool.run({})).error, /invalid/);
+});
+
+test("x mentions: handle stripped everywhere, any case, without eating longer handles", async () => {
+  const { stripMention } = await import("../../src/tools/xtrigger.js");
+  assert.equal(stripMention("@Grok_Bot please   fix @grok_bot", "grok_bot"), "please fix");
+  assert.equal(stripMention("@grok_botty hi", "grok_bot"), "@grok_botty hi");
+  assert.equal(stripMention("@a.b hi", "a.b"), "hi");
 });

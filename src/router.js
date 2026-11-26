@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import {
   loadAgents, listBots, findAgent, runAgent, runOrchestrated,
   thinkAnswer, deepSearch, runSquad, runDeep,
@@ -10,13 +11,24 @@ import { search, ingest } from "./rag/index.js";
 import { addTask, listTasks, runTask, setTaskRunner, deleteTask } from "./tasks/scheduler.js";
 import { issueToken, authRequired } from "./middleware/auth.js";
 import { agentsCrud } from "./middleware/agents-crud.js";
-import { pending, decide, takeHeld } from "./middleware/approvals.js";
+import { pending, decide, takeHeld, approvalStatus, needsReview } from "./middleware/approvals.js";
+import { resumeHeld } from "./agents/runtime.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
   sseStart, sseNote, sseDone
 } from "./observability/traces.js";
 import { transcribe, speak } from "./voice/voice.js";
 import { visionTool } from "./tools/vision.js";
+
+// RAG may only read project files, never system pseudo-files or app secrets
+export const RAG_ROOTS = (process.env.RAG_ROOTS || "/workspace,/app/docs").split(",").map(x => x.trim()).filter(Boolean);
+export function ragPath(p) {
+  if (typeof p !== "string" || !p || p.includes("\0")) return null;
+  const abs = resolvePath(p);
+  return RAG_ROOTS.some(r => { const root = r.replace(/\/+$/, ""); return abs.startsWith(root + "/"); }) ? abs : null;
+}
+// deep rounds come from the request body: clamp so one call can't loop for hours
+export const clampRounds = r => (r == null || r === "" ? undefined : Math.min(Math.max(1, Math.floor(Number(r)) || 1), 10));
 
 export function makeRouter({ tools, docker }) {
   const r = Router();
@@ -64,7 +76,8 @@ export function makeRouter({ tools, docker }) {
   });
   r.get("/governor", (req, res) => res.json(governor.snapshot()));
   r.post("/feedback", (req, res) => {
-    const { runId = "", comment = "", good = true } = req.body || {};
+    const b = req.body || {};
+    const runId = typeof b.runId === "string" ? b.runId : "", comment = typeof b.comment === "string" ? b.comment : "", good = b.good !== false;
     res.json({ ok: true, id: recordFeedback({ runId, comment, good }) });
   });
   r.get("/feedback", (req, res) => res.json(recentFeedback(Number(req.query.limit) || 5)));
@@ -84,19 +97,21 @@ export function makeRouter({ tools, docker }) {
   r.post("/approvals/:id/decision", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "bad approval id" });
-    const approve = (req.body || {}).approve === true;
-    const held = takeHeld(id);          // claim exactly once → idempotent approve
+    const body = req.body || {};
+    if (typeof body.approve !== "boolean") return res.status(400).json({ error: "approve must be true or false" });
+    const approve = body.approve;
+    const status = approvalStatus(id);
+    if (!status) return res.status(404).json({ error: "no such approval" });
+    if (status !== "pending") return res.status(409).json({ error: `already ${status}` });
+    const held = takeHeld(id);          // claim exactly once
     decide(id, approve);
-    if (!approve || !held) return res.json({ ok: true, approved: approve, resumed: false });
-    // Resume the paused thread: execute the held call, then continue the loop
-    let result;
+    if (!held) return res.json({ ok: true, approved: approve, resumed: false });
     try {
-      const tool = tools.find(t => t.name === held.call.function.name);
-      result = tool ? await tool.run(JSON.parse(held.call.function.arguments || "{}"), held.ctx) : { error: "unknown tool" };
-    } catch (e) { result = { error: e.message }; }
-    held.messages.push({ role: "tool", tool_call_id: held.call.id, content: JSON.stringify(result) });
-    const answer = await runAgent(held.agent, "", tools, { resume: held.messages, runId: held.ctx?.run?.runId, agentName: held.ctx?.agent });
-    res.json({ ok: true, approved: true, resumed: true, answer: typeof answer === "string" ? answer : answer });
+      const answer = await resumeHeld(held, tools, approve);
+      res.json({ ok: true, approved: approve, resumed: true, answer });
+    } catch (e) {
+      res.status(502).json({ ok: false, approved: approve, resumed: false, error: e.message });
+    }
   });
 
   // ---------- X triggers ----------
@@ -122,7 +137,7 @@ export function makeRouter({ tools, docker }) {
       answer = await runSquad(agent, ctx, tools, { onNote: n => notes.push(n.note) });
       extra = { mode: "squad", notes };
     } else if (mode === "deep") {
-      const out = await runDeep(agent, ctx, tools, { rounds, firstAnswer, onNote: () => {} });
+      const out = await runDeep(agent, ctx, tools, { rounds: clampRounds(rounds), firstAnswer: typeof firstAnswer === "string" ? firstAnswer : undefined, onNote: () => {} });
       answer = out.answer;
       extra = { mode: "deep", bottomLine: out.bottomLine, converged: out.converged, rounds: out.rounds, confidence: out.confidence };
     } else if (mode === "think") {
@@ -157,7 +172,7 @@ export function makeRouter({ tools, docker }) {
       try {
         if (mode === "deep") {
           const out = await runDeep(agent, ctx, tools, {
-            rounds, firstAnswer, onNote: n => sseNote(res, { note: n.note })
+            rounds: clampRounds(rounds), firstAnswer: typeof firstAnswer === "string" ? firstAnswer : undefined, onNote: n => sseNote(res, { note: n.note })
           });
           await remember(session, "user", message);
           await remember(session, "assistant", out.answer);
@@ -186,14 +201,33 @@ export function makeRouter({ tools, docker }) {
   r.post("/tools/:name/invoke", async (req, res) => {
     const tool = tools.find(t => t.name === req.params.name);
     if (!tool) return res.status(404).json({ error: "unknown tool" });
-    res.json(await tool.run(req.body || {}));
+    const args = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    // direct invocation must not bypass Auto Review for dangerous commands
+    if (needsReview(tool.name, args)) return res.status(403).json({ error: "needs review: run it through an Auto Review agent so a human can approve it" });
+    try { res.json(await tool.run(args, { agent: "api", run: {}, spawnDepth: 0 })); }
+    catch (e) { res.status(500).json({ error: e.message }); }
   });
-  r.post("/rag/ingest", async (req, res) => { await ingest(req.body.path); res.json({ ok: true }); });
-  r.post("/rag/search", async (req, res) => res.json(await search(req.body.query)));
-  r.post("/vision", async (req, res) =>
-    res.json({ description: await visionTool.run({ imageBase64: req.body.imageBase64, question: req.body.question }) }));
-  r.post("/voice/stt", async (req, res) =>
-    res.json({ text: await transcribe(Buffer.from(req.body.audioBase64, "base64")) }));
+  r.post("/rag/ingest", async (req, res) => {
+    const p = ragPath((req.body || {}).path);
+    if (!p) return res.status(400).json({ error: `path must be a file under ${RAG_ROOTS.join(" or ")}` });
+    try { await ingest(p); res.json({ ok: true, path: p }); }
+    catch (e) { res.status(e.code === "ENOENT" ? 404 : 500).json({ error: e.message }); }
+  });
+  r.post("/rag/search", async (req, res) => {
+    const q = (req.body || {}).query;
+    if (typeof q !== "string" || !q.trim()) return res.status(400).json({ error: "query required" });
+    res.json(await search(q.slice(0, 4000)));
+  });
+  r.post("/vision", async (req, res) => {
+    const { imageBase64, question } = req.body || {};
+    if (typeof imageBase64 !== "string" || !imageBase64) return res.status(400).json({ error: "imageBase64 required" });
+    res.json({ description: await visionTool.run({ imageBase64, question: typeof question === "string" ? question : undefined }) });
+  });
+  r.post("/voice/stt", async (req, res) => {
+    const a = (req.body || {}).audioBase64;
+    if (typeof a !== "string" || !a) return res.status(400).json({ error: "audioBase64 required" });
+    res.json({ text: await transcribe(Buffer.from(a, "base64")) });
+  });
   r.get("/voice/tts", async (req, res) =>
     res.json(await speak(String(req.query.text || "").slice(0, 1000))));
   r.get("/tasks", (req, res) => res.json(listTasks()));
@@ -202,11 +236,12 @@ export function makeRouter({ tools, docker }) {
     catch (e) { res.status(400).json({ error: e.message }); }
   });
   r.post("/tasks/:id/run", async (req, res) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: "bad task id" });
     const id = await runTask(+req.params.id);
     if (id == null) return res.status(404).json({ error: "no such task" });
     res.json({ ok: true });
   });
-  r.delete("/tasks/:id", (req, res) => res.status(deleteTask(+req.params.id) ? 200 : 404).json({ ok: true }));
+  r.delete("/tasks/:id", (req, res) => !/^\d+$/.test(req.params.id) ? res.status(400).json({ error: "bad task id" }) : res.status(deleteTask(+req.params.id) ? 200 : 404).json({ ok: true }));
   r.get("/images/:file", (req, res) => {
     const file = String(req.params.file);
     if (!/^[\w.-]+\.png$/.test(file) || file.includes("..")) return res.status(400).json({ error: "bad file name" });

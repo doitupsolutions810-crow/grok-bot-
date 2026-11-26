@@ -7,8 +7,14 @@ export const webFetchTool = {
     properties: { url: { type: "string" }, method: { type: "string", enum: ["GET", "POST"] }, body: { type: "string" } },
     required: ["url"]
   },
-  async run({ url, method = "GET", body }) {
-    const res = await fetch(url, {
+  async run({ url, method = "GET", body } = {}) {
+    let u;
+    try { u = new URL(String(url)); } catch { return { error: "invalid url" }; }
+    if (!["http:", "https:"].includes(u.protocol)) return { error: `unsupported protocol ${u.protocol}` };
+    method = String(method).toUpperCase();
+    if (!["GET", "POST"].includes(method)) return { error: "method must be GET or POST" };
+    if (body != null && typeof body !== "string") body = JSON.stringify(body);
+    const res = await fetch(u, {
       method,
       headers: { "user-agent": "GrokBot/1.0", "content-type": "application/json" },
       body: method === "POST" ? body : undefined,

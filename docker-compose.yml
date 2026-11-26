@@ -26,6 +26,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       PORT: 3000
+      API_TOKEN: ${API_TOKEN:-}        # control-API token; empty = generate one into the data volume on first boot
+      API_AUTH: ${API_AUTH:-on}        # off = no auth (only on a machine nobody else can reach)
       DOCKER_HOST: tcp://socket-proxy:2375      # no raw socket mount anymore
       LLM_PROVIDER: ollama
       RAG_ALLOW_SECRETS: ${RAG_ALLOW_SECRETS:-false}   # true = RAG may ingest any file (env, keys)

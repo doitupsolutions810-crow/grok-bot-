@@ -3,6 +3,12 @@
 // CI runs this after boot: docker compose exec grok-bot node tests/live.test.js
 
 const BASE = process.env.GROKBOT_URL || "http://localhost:3000";
+// every /api call carries the control-API token (CI sets API_TOKEN)
+{
+  const raw = globalThis.fetch;
+  globalThis.fetch = (url, o = {}) => raw(url, process.env.API_TOKEN && String(url).includes("/api/")
+    ? { ...o, headers: { ...(o.headers || {}), authorization: `Bearer ${process.env.API_TOKEN}` } } : o);
+}
 const j = (r) => r.json();
 // POST over node:http with no client timeout. Global fetch (undici) gives up after 300 s
 // without response headers, and a CPU-only squad run takes longer than that: live run
@@ -10,7 +16,7 @@ const j = (r) => r.json();
 import http from "node:http";
 const post = (path, body) => new Promise((resolve, reject) => {
   const data = JSON.stringify(body || {});
-  const req = http.request(`${BASE}/api${path}`, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(data) } }, res => {
+  const req = http.request(`${BASE}/api${path}`, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(data), ...(process.env.API_TOKEN ? { authorization: `Bearer ${process.env.API_TOKEN}` } : {}) } }, res => {
     let buf = ""; res.setEncoding("utf8");
     res.on("data", c => { buf += c; });
     res.on("end", () => resolve({ status: res.statusCode, ok: res.statusCode < 400, json: async () => JSON.parse(buf), text: async () => buf }));

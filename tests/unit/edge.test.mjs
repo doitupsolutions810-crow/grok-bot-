@@ -1950,3 +1950,43 @@ test("council: an agent's turn stops where it starts writing lines for other spe
   assert.equal(D.ownTurn("human: only invented text", roster), "", "nothing of its own -> empty -> (no reply)");
   assert.equal(D.ownTurn(null, roster), "");
 });
+
+// ================= round 31: control API is never open by default; new agents get no shell =================
+test("api auth: token required on /api except status/health; generated token persists; API_AUTH=off opts out", async () => {
+  const A = await import("../../src/middleware/api-auth.js");
+  const dir = mkdtempSync(join(tmpdir(), "gb-auth-"));
+  const file = join(dir, "api-token"); const logs = [];
+  const t1 = A.resolveToken({ env: {}, file, log: m => logs.push(m) });
+  assert.ok(t1.length >= 16); assert.equal(logs.length, 1, "printed once");
+  assert.equal(A.resolveToken({ env: {}, file, log: m => logs.push(m) }), t1, "same token after restart");
+  assert.equal(logs.length, 1);
+  assert.equal(A.resolveToken({ env: { API_TOKEN: "x".repeat(20) }, file }), "x".repeat(20));
+  assert.throws(() => A.resolveToken({ env: { API_TOKEN: "short" }, file }), /16/);
+  assert.equal(A.resolveToken({ env: { API_AUTH: "OFF" }, file }), null);
+
+  const app = express(); app.use(express.json());
+  app.use("/api", A.apiAuth({ token: t1, extra: t => t === "session-abc" }));
+  app.get("/api/status", (q, r) => r.json({ ok: 1 })); app.get("/api/health", (q, r) => r.json({ ok: 1 }));
+  app.post("/api/agents", (q, r) => r.json({ made: 1 })); app.post("/api/harness/proposals/:id/approve", (q, r) => r.json({ applied: 1 }));
+  app.post("/api/status", (q, r) => r.json({ posted: 1 }));
+  const s = app.listen(0); s.unref(); const base = `http://127.0.0.1:${s.address().port}/api`;
+  const call = (p, o = {}) => fetch(base + p, o).then(r => r.status);
+  assert.equal(await call("/status"), 200); assert.equal(await call("/health/"), 200);
+  assert.equal(await call("/status", { method: "POST" }), 401, "only GET status is open");
+  assert.equal(await call("/agents", { method: "POST" }), 401);
+  assert.equal(await call("/harness/proposals/p1/approve", { method: "POST" }), 401, "harness approve locked");
+  assert.equal(await call("/agents", { method: "POST", headers: { authorization: "Bearer wrong-token-of-any-len" } }), 401);
+  assert.equal(await call("/agents", { method: "POST", headers: { authorization: `Bearer ${t1}x` } }), 401, "length mismatch, no throw");
+  assert.equal(await call("/agents", { method: "POST", headers: { authorization: `bearer  ${t1}` } }), 200);
+  assert.equal(await call(`/agents?token=${t1}`, { method: "POST" }), 200, "webhook-style query token");
+  assert.equal(await call("/agents", { method: "POST", headers: { authorization: "Bearer session-abc" } }), 200, "issued session token");
+  assert.equal(await call("/AGENTS", { method: "POST" }), 401, "case variants still locked");
+  assert.equal(await call("/STATUS", { method: "POST" }), 401);
+  s.close();
+});
+
+test("agents: a new agent with no tools listed gets research tools, never terminal or browser", async () => {
+  const C = await import("../../src/middleware/agents-crud.js");
+  assert.deepEqual(C.DEFAULT_TOOLS, ["web.search", "web.fetch", "web.scrape"]);
+  for (const t of C.DEFAULT_TOOLS) assert.ok(!["*", "terminal", "browser", "node", "harness", "computer"].includes(t.split(".")[0]));
+});

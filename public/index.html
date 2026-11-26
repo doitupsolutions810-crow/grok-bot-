@@ -148,6 +148,22 @@
 </dialog>
 
 <script>
+// Control-API token: every /api call carries it. On a 401 the console asks once and remembers it
+// (the token is in the server log on first boot, or is your API_TOKEN).
+{
+  const raw = window.fetch.bind(window);
+  window.fetch = async (url, o = {}) => {
+    const isApi = typeof url === "string" && url.startsWith("/api");
+    const withTok = () => { const t = localStorage.getItem("grokbot.apiToken");
+      return t ? { ...o, headers: { ...(o.headers || {}), authorization: `Bearer ${t}` } } : o; };
+    let res = await raw(url, isApi ? withTok() : o);
+    if (isApi && res.status === 401) {
+      const t = prompt("Grok Bot API token (from the server log, or your API_TOKEN):");
+      if (t) { localStorage.setItem("grokbot.apiToken", t.trim()); res = await raw(url, withTok()); }
+    }
+    return res;
+  };
+}
 const $ = id => document.getElementById(id);
 // Agent names, instructions, tool args and ledger rows are user/LLM-controlled:
 // escape everything that goes through innerHTML (stored-XSS guard).

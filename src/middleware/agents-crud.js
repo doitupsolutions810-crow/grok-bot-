@@ -19,6 +19,8 @@ const ALL_TOOLS = [
   "rag.search", "team.ask", "team.spawn", "task.board", "skill.list", "skill.load",
   "mcp.filesystem", "mcp.git", "voice.speak", "memory.recall", "node", "mcp", "env"
 ];
+// a new agent can research but not run shell commands unless its creator grants terminal/browser
+export const DEFAULT_TOOLS = ["web.search", "web.fetch", "web.scrape"];
 const FIELDS = ["name", "job", "instructions", "model", "tools", "mode", "trigger", "emoji", "review", "resources", "env", "network", "mcp"];
 const LIMITS = { name: 64, job: 1000, instructions: 8000, emoji: 16 };
 const MAX_AGENTS = (() => { const n = Number(process.env.MAX_AGENTS); return Number.isFinite(n) && process.env.MAX_AGENTS !== "" && process.env.MAX_AGENTS != null ? Math.max(0, Math.floor(n)) : 200; })();
@@ -92,7 +94,7 @@ export function agentsCrud(r) {
     if (db.bots.length >= MAX_AGENTS) return res.status(409).json({ errors: [`agent limit reached (${MAX_AGENTS})`] });
     const bot = {
       id, name: body.name, job: body.job || "", instructions: body.instructions || "",
-      model: body.model || "", tools: body.tools?.length ? body.tools : ["terminal", "browser", "web.fetch"],
+      model: body.model || "", tools: body.tools?.length ? body.tools : DEFAULT_TOOLS,
       mode: body.mode || "chat", trigger: body.trigger || "", review: !!body.review, emoji: body.emoji || "🤖",
       // the agent's own node (all optional): resource limits, env vars, network, MCP servers
       ...(body.resources ? { resources: body.resources } : {}), ...(body.env ? { env: body.env } : {}),

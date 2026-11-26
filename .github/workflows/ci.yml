@@ -16,6 +16,7 @@ jobs:
       LLM_MODEL: qwen2.5:3b
       MODELS_REQUIRED: qwen2.5:3b,nomic-embed-text
       BOOT_STRICT: "true"
+      API_TOKEN: ci-control-token-${{ github.run_id }}
       LATTICE_AUTONOMY: "false"     # growth cycles would compete with the tests for the runner's CPU
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +67,7 @@ jobs:
         timeout-minutes: 10
         run: |
           set -e
-          api() { curl -fsS -X POST "http://localhost:3000/api/$1" -H 'content-type: application/json' -d "$2"; }
+          api() { curl -fsS -H "authorization: Bearer $API_TOKEN" -X POST "http://localhost:3000/api/$1" -H 'content-type: application/json' -d "$2"; }
           api agents '{"name":"Node Prober","job":"node checks","resources":{"cpus":0.5,"memoryMb":256},"env":{"PROBE":"yes"}}' >/dev/null
           api agents/node-prober/node '{}' | tee node.json
           api tools/node.exec/invoke '{"command":"echo hello from $(hostname) PROBE=${PROBE:-unset}"}' | tee exec.json
@@ -76,7 +77,7 @@ jobs:
           api tools/node.service/invoke '{"action":"status","name":"ticker"}' | tee status.json
           grep -q 'active (running)' status.json
           api tools/node.info/invoke '{}' | tee info.json
-          curl -fsS http://localhost:3000/api/nodes | tee nodes.json
+          curl -fsS -H "authorization: Bearer $API_TOKEN" http://localhost:3000/api/nodes | tee nodes.json
           grep -q 'grok-node-node-prober' nodes.json
           docker inspect grok-node-node-prober --format 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}} env={{json .Config.Env}}' | tee inspect.txt
           grep -q 'mem=268435456' inspect.txt && grep -q 'PROBE=yes' inspect.txt
@@ -85,9 +86,9 @@ jobs:
       - name: Team council (real agents talk, use their tools, record eurekas)
         timeout-minutes: 20
         run: |
-          curl -fsS -X POST http://localhost:3000/api/agents -H 'content-type: application/json' \
+          curl -fsS -H "authorization: Bearer $API_TOKEN" -X POST http://localhost:3000/api/agents -H 'content-type: application/json' \
             -d '{"name":"Edge Critic","job":"edge case review","instructions":"You review test plans and point out the edge cases nobody tested. Speak plainly and politely."}' >/dev/null || true
-          curl -fsS --max-time 1100 -X POST http://localhost:3000/api/council -H 'content-type: application/json' \
+          curl -fsS -H "authorization: Bearer $API_TOKEN" --max-time 1100 -X POST http://localhost:3000/api/council -H 'content-type: application/json' \
             -d '{"topic":"Continue even longer, more robust testing against even more edge cases, and fix along the way. Which edge case in this system should we test next, and why?","agents":["grok-main","edge-critic"],"rounds":2}' \
             -o council.json
           node -e '
@@ -101,8 +102,8 @@ jobs:
 
       - name: Lattice (follow the council agents' prompts, thoughts, tool calls and messages)
         run: |
-          curl -fsS "http://localhost:3000/api/lattice/events?kind=thought,tool_call,tool_result,say,eureka&limit=400" -o lattice.json
-          curl -fsS http://localhost:3000/api/lattice/graph -o graph.json
+          curl -fsS -H "authorization: Bearer $API_TOKEN" "http://localhost:3000/api/lattice/events?kind=thought,tool_call,tool_result,say,eureka&limit=400" -o lattice.json
+          curl -fsS -H "authorization: Bearer $API_TOKEN" http://localhost:3000/api/lattice/graph -o graph.json
           node -e '
             const ev = require("./lattice.json").events, g = require("./graph.json"), fs = require("fs");
             const esc = s => String(s).replace(/\s+/g, " ").replace(/%/g, "%25");
@@ -118,15 +119,15 @@ jobs:
       - name: Lattice session (10 minutes of autonomous agents on the owner's mission)
         timeout-minutes: 25
         run: |
-          curl -fsS -X POST http://localhost:3000/api/lattice/session -H 'content-type: application/json' \
+          curl -fsS -H "authorization: Bearer $API_TOKEN" -X POST http://localhost:3000/api/lattice/session -H 'content-type: application/json' \
             -d '{"minutes":10,"agents":["grok-main","edge-critic","grok-scout","grok-engineer"]}' | tee session.json
           for i in $(seq 1 150); do
-            active=$(curl -fsS http://localhost:3000/api/lattice/session | node -pe 'JSON.parse(require("fs").readFileSync(0)).active')
+            active=$(curl -fsS -H "authorization: Bearer $API_TOKEN" http://localhost:3000/api/lattice/session | node -pe 'JSON.parse(require("fs").readFileSync(0)).active')
             [ "$active" = "false" ] && break; sleep 10
           done
-          curl -fsS http://localhost:3000/api/lattice/session | tee session-final.json
-          curl -fsS "http://localhost:3000/api/lattice/highlights?limit=40" -o highlights.json
-          curl -fsS "http://localhost:3000/api/lattice/events?limit=2000" -o lattice-all.json
+          curl -fsS -H "authorization: Bearer $API_TOKEN" http://localhost:3000/api/lattice/session | tee session-final.json
+          curl -fsS -H "authorization: Bearer $API_TOKEN" "http://localhost:3000/api/lattice/highlights?limit=40" -o highlights.json
+          curl -fsS -H "authorization: Bearer $API_TOKEN" "http://localhost:3000/api/lattice/events?limit=2000" -o lattice-all.json
           node -e '
             const h = require("./highlights.json").highlights, s = require("./session-final.json"), fs = require("fs");
             const esc = t => String(t).replace(/\s+/g, " ").replace(/%/g, "%25");
@@ -137,9 +138,9 @@ jobs:
           '
           # each agent's mind after the session: its reasoning, lessons and self-set goals
           for a in grok-main edge-critic grok-scout grok-engineer; do
-            curl -fsS "http://localhost:3000/api/lattice/minds/$a" -o "mind-$a.json" || true
+            curl -fsS -H "authorization: Bearer $API_TOKEN" "http://localhost:3000/api/lattice/minds/$a" -o "mind-$a.json" || true
           done
-          curl -fsS "http://localhost:3000/api/lattice/events?kind=reasoning&limit=500" -o reasoning.json || true
+          curl -fsS -H "authorization: Bearer $API_TOKEN" "http://localhost:3000/api/lattice/events?kind=reasoning&limit=500" -o reasoning.json || true
           node -e '
             const fs = require("fs"), esc = t => String(t).replace(/\s+/g, " ").replace(/%/g, "%25");
             const r = (JSON.parse(fs.readFileSync("reasoning.json", "utf8")).events || []).slice(-4);

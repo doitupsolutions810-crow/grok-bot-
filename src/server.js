@@ -1,3 +1,5 @@
+import { apiAuth, resolveToken } from "./middleware/api-auth.js";
+import { hasSession } from "./middleware/auth.js";
 import express from "express";
 import { bootDocker } from "./boot/docker.js";
 import { jsonErrors } from "./middleware/json-errors.js";
@@ -88,6 +90,9 @@ async function main() {
   // 8. Serve
   const app = express();
   app.use(express.json({ limit: "2mb" }));
+  const apiToken = resolveToken();
+  if (!apiToken) console.warn("[auth] API_AUTH=off: the control API is open to anyone who can reach this port");
+  app.use("/api", apiAuth({ token: apiToken, extra: hasSession }));
   app.use("/api", makeRouter({ tools, docker }));
   // Grok Bot as an MCP server (off unless MCP_TOKEN is set)
   app.all("/mcp", mcpHandler({ getAgent, listAgents, runAgent, tools, knowledge: teamKnowledge }));

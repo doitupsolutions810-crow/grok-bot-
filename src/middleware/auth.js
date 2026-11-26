@@ -18,3 +18,5 @@ export function authRequired(req, res, next) {
   if (!token || !sessions.has(token)) return res.status(401).json({ error: "unauthorized" });
   next();
 }
+
+export const hasSession = token => sessions.has(String(token || ""));

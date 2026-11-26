@@ -1890,3 +1890,49 @@ test("LLM router skips a model the backend reported missing instead of retrying 
   if (saved.c === undefined) delete process.env.MODEL_CHAIN; else process.env.MODEL_CHAIN = saved.c;
   srv.close();
 });
+
+// ================= round 29: tool calls written as text (seen live, council 03:22 EST) =================
+test("runtime: a tool call written as JSON text is run for real; one narrated in prose gets a single nudge", async () => {
+  const RT = await import("../../src/agents/runtime.js");
+  const tools = [{ name: "team.say" }, { name: "team.ask" }, { name: "web.search" }];
+  // verbatim from grok-main in the live council
+  const live = "Grok Bot, I'll use the team.ask function to ask for their input and then we can proceed with the next steps.\n\nGrok Bot, team.say: \"Grok Main proposes the following edge cases\"";
+  assert.deepEqual(RT.narratedTools(live, tools).sort(), ["team.ask", "team.say"]);
+  assert.deepEqual(RT.narratedTools("We discussed what team.say is for, and the search results were thin.", tools), [], "passing mentions don't count");
+  assert.deepEqual(RT.narratedTools("", tools), []);
+  const c = RT.inlineCall('```json\n{"name":"web.search","arguments":{"query":"node test runner"}}\n```', tools);
+  assert.equal(c.function.name, "web.search"); assert.deepEqual(JSON.parse(c.function.arguments), { query: "node test runner" });
+  assert.equal(RT.inlineCall('{"name":"team.say","arguments":"{\\"text\\":\\"hi\\"}"}', tools).function.name, "team.say", "string arguments");
+  for (const bad of ['{"name":"terminal","arguments":{"cmd":"rm -rf /"}}', '{"name":"web.search","arguments":[1]}', "{not json}", 'text {"name":"web.search","arguments":{}}', '{"answer":"42"}'])
+    assert.equal(RT.inlineCall(bad, tools), null, bad);
+});
+
+test("runtime: the nudge fires once, then the agent's real call runs (stub model)", async () => {
+  const replies = [
+    { role: "assistant", content: "I'll use the team.say function to tell the team." },
+    { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "probe.echo", arguments: '{"x":1}' } }] },
+    { role: "assistant", content: "Done: I told the team." },
+  ];
+  const seen = [];
+  const srv = http.createServer((req, res) => { let b = ""; req.on("data", d => b += d); req.on("end", () => {
+    seen.push(JSON.parse(b).messages.at(-1));
+    const msg = replies.shift() || { role: "assistant", content: "extra" };
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model: "m", choices: [{ index: 0, finish_reason: "stop", message: msg }] }));
+  }); });
+  await new Promise(r => srv.listen(0, r)); srv.unref();
+  const saved = { u: process.env.OLLAMA_URL, c: process.env.MODEL_CHAIN };
+  process.env.OLLAMA_URL = `http://127.0.0.1:${srv.address().port}`; process.env.MODEL_CHAIN = "stub:1b";
+  const RT = await import(`../../src/agents/runtime.js?r29=${Date.now()}`);
+  let ran = 0;
+  const tools = [{ name: "probe.echo", description: "echo", parameters: { type: "object", properties: {} }, run: async a => { ran++; return { ok: true, a }; } },
+    { name: "team.say", description: "say", parameters: { type: "object", properties: {} }, run: async () => ({ ok: true }) }];
+  const out = await RT.runAgent({ id: "nudge-probe", tools: ["*"], systemPrompt: "x", model: `nudge-stub-${Date.now()}:1b` }, "tell the team, use team.say", tools, { runId: "r29", maxSteps: 6 });
+  assert.equal(out, "Done: I told the team.");
+  assert.equal(ran, 1, "the real call ran");
+  assert.match(String(seen[1].content), /did not call it/, "second model call carried the nudge");
+  assert.equal(seen.filter(m => /did not call it/.test(String(m.content))).length, 1, "nudged once only");
+  process.env.OLLAMA_URL = saved.u ?? ""; if (!saved.u) delete process.env.OLLAMA_URL;
+  if (saved.c === undefined) delete process.env.MODEL_CHAIN; else process.env.MODEL_CHAIN = saved.c;
+  srv.close();
+});

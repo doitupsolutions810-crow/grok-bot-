@@ -58,6 +58,36 @@ const ALWAYS = new Set(["team.say", "team.inbox", "team.knowledge", "skill.list"
 function safeMind(id) { try { return mindContext(id); } catch { return ""; } }
 function safeTeamContext() { try { return teamContext(); } catch { return ""; } }
 
+// A tool call the model wrote into its text as JSON ({"name": "team.say", "arguments": {...}}),
+// for a tool this agent is granted. Anything else is left as text.
+export function inlineCall(content, available) {
+  const text = String(content || "").trim();
+  if (!text || text.length > 8000) return null;
+  const m = text.match(/^(?:```(?:json)?\s*)?(\{[\s\S]*\})(?:\s*```)?$/);
+  if (!m) return null;
+  let o; try { o = JSON.parse(m[1]); } catch { return null; }
+  const name = o?.name ?? o?.function?.name ?? o?.tool;
+  let args = o?.arguments ?? o?.parameters ?? o?.function?.arguments ?? o?.args ?? {};
+  if (typeof args === "string") { try { args = JSON.parse(args); } catch { return null; } }
+  if (typeof name !== "string" || !args || typeof args !== "object" || Array.isArray(args)) return null;
+  if (!available.some(t => t.name === name)) return null;
+  return { id: `inline-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, type: "function", function: { name, arguments: JSON.stringify(args) } };
+}
+
+// Offered tools the text says it is calling ("team.say: ...", "I'll use the team.ask function",
+// "call web.search(...)") without a real call. Mentions in passing are not counted.
+export function narratedTools(content, offered) {
+  const text = String(content || "");
+  if (!text) return [];
+  const out = [];
+  for (const t of offered) {
+    const n = t.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(\\b${n}\\s*[:(]|\\b(use|call|invoke|run)\\s+(the\\s+)?\`?${n}\`?(\\s+(function|tool))?\\b)`, "i");
+    if (re.test(text)) out.push(t.name);
+  }
+  return out;
+}
+
 export async function runAgent(agent, userMessage, tools, opts = {}) {
   const { maxSteps = 8, resume = null } = opts;
   const ctx = opts.ctx || {
@@ -86,6 +116,7 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
   if (!resume) lattice.record("prompt", { agent: ctx.agent, runId: opts.runId, text: String(userMessage ?? ""),
     data: { system: String(agent.systemPrompt || "").slice(0, 300), tools: offered.map(t => t.name), granted: available.length } });
 
+  let nudged = false;
   for (let step = 0; step < maxSteps; step++) {
     let reply;
     try { reply = await chatRoute(messages, offered, { mode: agent.mode || "chat", model: agent.model || "" }); }
@@ -95,6 +126,24 @@ export async function runAgent(agent, userMessage, tools, opts = {}) {
     const { reasoning } = splitReasoning(reply);
     if (reasoning) lattice.record("reasoning", { agent: ctx.agent, runId: opts.runId, text: reasoning });
 
+    if (!reply.tool_calls?.length) {
+      // small models often WRITE a tool call instead of making it: a JSON call in the text is
+      // salvaged into a real call; a call narrated in prose gets one nudge to actually make it
+      const salvaged = inlineCall(reply.content, available);
+      if (salvaged) {
+        reply = { ...reply, content: "", tool_calls: [salvaged] };
+        lattice.record("thought", { agent: ctx.agent, runId: opts.runId, text: `(tool call written as text, run as ${salvaged.function.name})` });
+      } else {
+        const named = narratedTools(reply.content, offered);
+        if (named.length && !nudged && step < maxSteps - 1) {
+          nudged = true;
+          messages.push({ role: "assistant", content: String(reply.content) },
+            { role: "user", content: `You described using ${named.join(", ")} but did not call it. If you need it, call the tool now; otherwise give your final answer without describing tool calls.` });
+          lattice.record("thought", { agent: ctx.agent, runId: opts.runId, text: `(nudged: described ${named.join(", ")} without calling it)` });
+          continue;
+        }
+      }
+    }
     if (!reply.tool_calls?.length) {                         // final answer
       lattice.record("answer", { agent: ctx.agent, runId: opts.runId, text: reply.content ?? "" });
       return reply.content;

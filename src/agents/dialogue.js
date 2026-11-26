@@ -61,6 +61,9 @@ const NOT_A_FINDING = [
   /^(i|we)\s*(will|'ll|am going to|are going to|plan to|shall)\b/i,
   /^(let'?s|let us|please|once|next,?|first,?|i propose|we propose|i suggest|we should (start|begin|also consider|consider))\b/i,
   /\b(no|nothing)\s+(new|recent|specific|notable)?\s*(discover(y|ies)|findings?|insights?)\b/i,
+  // "No relevant edge cases have been recorded yet", "the board is empty": a status, not a finding
+  /^(there\s+(are|is)\s+)?(no|nothing)\b[^.]{0,80}\b(recorded|found|yet|available|logged|so far)\b/i,
+  /\b(knowledge board|board)\b[^.]{0,40}\b(is|was)\s+(currently\s+)?empty\b/i,
 ];
 export function isFinding(t) {
   const s = String(t || "").trim();

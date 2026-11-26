@@ -2008,3 +2008,19 @@ test("shell always: every agent can use terminal whatever its list; research env
   const C = await import("../../src/middleware/agents-crud.js");
   assert.deepEqual(reg._defaultTools, C.DEFAULT_TOOLS, "one default, not two");
 });
+
+// ================= round 33: "nothing recorded yet" is a status, not a eureka (seen live 04:08 EST) =================
+test("eureka board: 'no edge cases recorded yet' and 'the board is empty' are refused; real findings still land", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  for (const t of [
+    "No relevant edge cases have been recorded yet. Let's start by identifying a potential edge case and then proceed with testing it.",   // verbatim, grok-main 04:08
+    "There are no edge cases logged so far for the scheduler module.",
+    "The team knowledge board is currently empty, suggesting no recent discussions or discoveries.",                                     // verbatim, CI 45779479209
+    "Nothing has been found yet about the router's fallback behaviour.",
+  ]) assert.equal(D.isFinding(t), false, t);
+  for (const t of [
+    "Testing a timeout scenario where the system is forced to handle a very long-running operation could reveal how gracefully it handles delays.",
+    "No rate limit is applied to POST /api/council, so two parallel councils both run to completion.",
+    "Two writers on one agent record: the second PATCH silently overwrites the first.",
+  ]) assert.equal(D.isFinding(t), true, t);
+});

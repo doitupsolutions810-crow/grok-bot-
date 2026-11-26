@@ -1111,3 +1111,87 @@ test("browser service: image installs the playwright package at the image's own 
   assert.equal(pkg.dependencies.playwright.replace(/^[\^~]/, ""), img[1], "server and browser must speak the same playwright version");
   assert.match(readFileSync(new URL("../../src/boot/preinstall.js", import.meta.url), "utf8"), new RegExp(`playwright:v${img[1].replace(/\./g, "\\.")}`));
 });
+
+// ================= round 15: self-development — agents improve their own harness =================
+async function harnessFixture() {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "hroot-"));
+  mkdirSync(join(root, "src"), { recursive: true }); mkdirSync(join(root, "tests"), { recursive: true }); mkdirSync(join(root, "skills"), { recursive: true });
+  writeFileSync(join(root, "src", "add.js"), "export const add = (a, b) => a - b;\n");     // a real bug for the agent to fix
+  writeFileSync(join(root, "tests", "add.test.mjs"), "import { add } from '../src/add.js';\nimport assert from 'node:assert';\nassert.equal(add(2, 2), 4);\n");
+  writeFileSync(join(root, ".env"), "SECRET=1\n");
+  writeFileSync(join(root, "Dockerfile"), "FROM x\n");
+  process.env.HARNESS_ROOT = root;
+  process.env.HARNESS_TEST_CMD = `${process.execPath} tests/add.test.mjs`;
+  return root;
+}
+
+test("harness: agents read their own source but never secrets, CI, Docker, or paths outside", async () => {
+  await harnessFixture();
+  const h = await import("../../src/agents/harness.js");
+  const [list, read] = h.harnessTools();
+  assert.deepEqual((await list.run({ dir: "src" })).files, ["src/add.js"]);
+  assert.match((await read.run({ path: "src/add.js" })).content, /a - b/);
+  for (const p of [".env", "../etc/passwd", "/etc/passwd", "Dockerfile", "src/../../x", ".github/workflows/ci.yml", "data/lattice.jsonl", "src/x.pem", "src/\0x"])
+    assert.ok((await read.run({ path: p })).error, p);
+  assert.throws(() => h.safeRel("tests/add.test.mjs", { write: true }), /existing test/);   // can't weaken the judge
+  assert.equal(h.safeRel("tests/new.test.mjs", { write: true }), "tests/new.test.mjs");
+  assert.throws(() => h.safeRel("package.json", { write: true }), /writable areas/);
+});
+
+test("harness: a broken proposal fails with the test output; a chained fix passes; only the owner applies it (with backup)", async () => {
+  const root = await harnessFixture();
+  const { readFileSync, existsSync } = await import("node:fs");
+  const h = await import("../../src/agents/harness.js");
+  const [, , propose, proposals] = h.harnessTools();
+  const bad = await propose.run({ title: "syntax slip", files: [{ path: "src/add.js", content: "export const add = (a, b) => ;" }] }, { agent: "coder" });
+  assert.equal(bad.status, "failed"); assert.equal(bad.stage, "syntax");   // even with no package.json "type" (Node 22 --check misses it)
+  assert.equal((await h.checkSyntax("module.exports = 1;", "commonjs")).code, 0);
+  assert.notEqual((await h.checkSyntax("export const x = ;", "module")).code, 0);
+  const wrong = await propose.run({ title: "still wrong", files: [{ path: "src/add.js", content: "export const add = (a, b) => a * b + 1;\n" }] }, { agent: "coder" });
+  assert.equal(wrong.status, "failed"); assert.match(wrong.output, /AssertionError|5/);
+  const good = await propose.run({ title: "fix add", basedOn: wrong.id, rationale: "the tests show add subtracts",
+    files: [{ path: "src/add.js", content: "export const add = (a, b) => a + b;\n" }, { path: "skills/adder/SKILL.md", content: "---\nname: adder\n---\nAdd numbers.\n" }] }, { agent: "coder" });
+  assert.equal(good.status, "passed");
+  assert.match(readFileSync(join(root, "src", "add.js"), "utf8"), /a - b/, "nothing applies without the owner");
+  assert.equal((await proposals.run({ id: good.id })).basedOn, wrong.id);
+  assert.throws(() => h.applyProposal(h.getProposal(wrong.id)), /only a proposal that passed/);
+  h.applyProposal(h.getProposal(good.id));
+  assert.match(readFileSync(join(root, "src", "add.js"), "utf8"), /a \+ b/);
+  assert.ok(existsSync(join(root, "skills", "adder", "SKILL.md")));
+  assert.match(readFileSync(join(process.env.DATA_DIR, "proposals", good.id, "backup", "src", "add.js"), "utf8"), /a - b/);
+  // input edges
+  assert.match((await propose.run({ title: "x", files: [] })).error, /files required/);
+  assert.match((await propose.run({ title: "", files: [{ path: "src/a.js", content: "" }] })).error, /title/);
+  assert.match((await propose.run({ title: "dup", files: [{ path: "src/a.js", content: "1" }, { path: "src//a.js", content: "2" }] })).error, /twice/);
+  assert.match((await propose.run({ title: "big", files: [{ path: "src/a.js", content: "x".repeat(200_001) }] })).error, /larger/);
+  assert.match((await propose.run({ title: "ghost", basedOn: "p-nope000", files: [{ path: "src/a.js", content: "1" }] })).error, /unknown basedOn/);
+  assert.equal(h.getProposal("../../etc"), null);
+  // HARNESS_AUTO_APPLY: passing proposals apply themselves
+  process.env.HARNESS_AUTO_APPLY = "true";
+  const auto = await propose.run({ title: "doc", files: [{ path: "docs/notes.md", content: "hi" }] }, { agent: "coder" });
+  assert.equal(h.getProposal(auto.id).status, "applied");
+  delete process.env.HARNESS_AUTO_APPLY; delete process.env.HARNESS_ROOT; delete process.env.HARNESS_TEST_CMD;
+});
+
+test("harness API: list, get, approve (409 unless passed), reject", async () => {
+  const root = await harnessFixture();
+  const h = await import("../../src/agents/harness.js");
+  const failed = await h.propose({ agent: "z", title: "nope", files: [{ path: "src/add.js", content: "export const add = () => 0;\n" }] });
+  const passed = await h.propose({ agent: "z", title: "yes", files: [{ path: "src/add.js", content: "export const add = (a, b) => a + b;\n" }] });
+  const { makeRouter } = await import("../../src/router.js");
+  const app = express(); app.use(express.json());
+  app.use("/api", makeRouter({ tools: [], docker: { listContainers: async () => [] } }));
+  const s = app.listen(0); s.unref();
+  const u = `http://127.0.0.1:${s.address().port}/api`;
+  const j = (m, p) => fetch(u + p, { method: m }).then(async r => ({ status: r.status, body: await r.json() }));
+  assert.ok((await j("GET", "/harness/proposals")).body.proposals.some(p => p.id === passed.id));
+  assert.equal((await j("GET", "/harness/proposals/p-missing00")).status, 404);
+  assert.equal((await j("POST", `/harness/proposals/${failed.id}/approve`)).status, 409);
+  assert.equal((await j("POST", `/harness/proposals/${passed.id}/approve`)).body.status, "applied");
+  assert.equal((await j("POST", `/harness/proposals/${passed.id}/reject`)).status, 409);
+  assert.equal((await j("POST", `/harness/proposals/${failed.id}/reject`)).body.status, "rejected");
+  delete process.env.HARNESS_ROOT; delete process.env.HARNESS_TEST_CMD;
+  void root;
+});

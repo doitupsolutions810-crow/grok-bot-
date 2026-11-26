@@ -17,6 +17,7 @@ import { resumeHeld } from "./agents/runtime.js";
 import { getAgent } from "./agents/registry.js";
 import * as nodes from "./agents/nodes.js";
 import * as lattice from "./agents/lattice.js";
+import * as harness from "./agents/harness.js";
 import { post as postDialogue, feed as dialogueFeed, knowledge as teamKnowledge, council, KINDS } from "./agents/dialogue.js";
 import {
   streamChat, queryTraces, ledger, recordFeedback, recentFeedback,
@@ -318,6 +319,24 @@ export function makeRouter({ tools, docker }) {
       return res.status(400).json({ error: "agents must be a list of known agent ids" });
     const out = await lattice.growOnce({ council, runAgent, tools: tools || [], getAgent, knowledge: teamKnowledge, agents: names });
     res.status(out.skipped ? 409 : out.ok ? 200 : 502).json(out);
+  });
+  // ---------- self-development: agents' proposals to improve their own harness ----------
+  r.get("/harness/proposals", (req, res) => res.json({ autoApply: process.env.HARNESS_AUTO_APPLY === "true", proposals: harness.listProposals({ limit: req.query.limit }) }));
+  r.get("/harness/proposals/:id", (req, res) => {
+    const p = harness.getProposal(req.params.id);
+    p ? res.json(p) : res.status(404).json({ error: "no such proposal" });
+  });
+  r.post("/harness/proposals/:id/approve", (req, res) => {
+    const p = harness.getProposal(req.params.id);
+    if (!p) return res.status(404).json({ error: "no such proposal" });
+    try { const a = harness.applyProposal(p, "owner"); res.json({ id: a.id, status: a.status, files: a.files.map(f => f.path), note: "restart grok-bot to load the changed code" }); }
+    catch (e) { res.status(409).json({ error: e.message }); }
+  });
+  r.post("/harness/proposals/:id/reject", (req, res) => {
+    const p = harness.getProposal(req.params.id);
+    if (!p) return res.status(404).json({ error: "no such proposal" });
+    if (p.status === "applied") return res.status(409).json({ error: "already applied" });
+    res.json({ id: p.id, status: harness.reject(p) });
   });
   // ---------- agent nodes: one machine per agent ----------
   r.get("/nodes", async (_req, res) => {

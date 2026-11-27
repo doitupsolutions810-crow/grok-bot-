@@ -64,7 +64,11 @@ const NOT_A_FINDING = [
   // "No relevant edge cases have been recorded yet", "the board is empty": a status, not a finding
   /^(there\s+(are|is)\s+)?(no|nothing)\b[^.]{0,80}\b(recorded|found|yet|available|logged|so far)\b/i,
   /\b(knowledge board|board)\b[^.]{0,40}\b(is|was)\s+(currently\s+)?empty\b/i,
-  /^the team (has|have)\s+(agreed|decided|aligned|discussed)\b/i,   // the meeting's status, not a finding
+  /^the team (has|have)\s+(agreed|decided|aligned|discussed)\b/i,
+  // CI 45859213347: "Additionally, we should explore…", "To verify X, we should use…", "I believe we should…"
+  /^(additionally|also|furthermore|moreover|in addition|to [^,.]{1,100}),?\s+(we|i|the team)\s+(should|could|can|will|need to|must|might)\b/i,
+  /^i\s+(believe|think|feel|suggest that)\s+(we|the team)\s+(should|could|need to|must)\b/i,
+  /^i\s+(agree|concur)\s+with\b/i,   // the meeting's status, not a finding
   // "We should also explore the edge case where…": a proposal, not something found
   /^(we|the team|you)\s+(should|could|might|must|need to)\s+(also\s+)?(explore|test|look|investigate|try|check|consider|examine|run|start|focus|prioriti[sz]e|remember)\b/i,
 ];

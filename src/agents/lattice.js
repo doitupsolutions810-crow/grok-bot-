@@ -173,6 +173,8 @@ export async function growOnce({ council, runAgent, tools, getAgent, knowledge, 
   }
 }
 
+const MINUTE_MS = () => Math.max(1, Number(process.env.SESSION_MINUTE_MS) || 60_000);   // tests shrink it
+const GRACE_MS = () => Math.max(0, Number(process.env.SESSION_GRACE_MS ?? 60_000));
 // A timed session: growth cycles back to back for `minutes` (1..60), in the background.
 const session = { active: false, id: "", startedAt: "", endsAt: "", cycles: 0, runIds: [], stop: false };
 export const sessionStatus = () => ({ ...session, runIds: [...session.runIds] });
@@ -181,16 +183,23 @@ export function startSession(deps, { minutes = 10, agents } = {}) {
   const mins = Math.min(Math.max(1, Number(minutes) || 10), 60);
   const now = Date.now();
   Object.assign(session, { active: true, stop: false, id: `session-${now.toString(36)}`, startedAt: new Date(now).toISOString(),
-    endsAt: new Date(now + mins * 60_000).toISOString(), cycles: 0, runIds: [] });
+    endsAt: new Date(now + mins * MINUTE_MS()).toISOString(), cycles: 0, runIds: [] });
   record("cycle", { agent: "lattice", text: `session ${session.id} started for ${mins} min`, data: { agents: agents || null } });
   (async () => {
     try {
-      while (!session.stop && Date.now() < now + mins * 60_000) {
-        const c = await growOnce({ ...deps, agents, force: true });
-        if (c.skipped) { await new Promise(r => setTimeout(r, 2000)); continue; }
+      const end = now + mins * MINUTE_MS();
+      while (!session.stop && Date.now() < end) {
+        // the session ends on time even if a cycle is mid-turn (a slow model held one 15+ min
+        // past its end in CI run 45864257264); that cycle finishes in the background
+        let timer;
+        const over = new Promise(r => { timer = setTimeout(() => r({ overtime: true }), Math.max(0, end - Date.now()) + GRACE_MS()); });
+        const c = await Promise.race([growOnce({ ...deps, agents, force: true }), over]).finally(() => clearTimeout(timer));
+        if (c.overtime) { record("cycle", { agent: "lattice", text: `session ${session.id} reached its end with a cycle still running; that cycle finishes in the background` }); break; }
+        const nap = () => new Promise(r => setTimeout(r, Math.max(0, Math.min(2000, end - Date.now()))));
+        if (c.skipped) { await nap(); continue; }
         session.cycles++;
         if (c.runId) session.runIds.push(c.runId);
-        if (!c.ok) await new Promise(r => setTimeout(r, 2000));    // don't spin on a broken model
+        if (!c.ok) await nap();    // don't spin on a broken model
       }
     } finally {
       session.active = false;

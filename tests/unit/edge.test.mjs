@@ -2100,3 +2100,37 @@ test("eureka board: only the finding lands, not the plan, the second EUREKA, or 
   assert.equal(D.findingOnly("PATCH races: the second write wins. GET shows the second name. Should we lock?"), "PATCH races: the second write wins. GET shows the second name.");
   assert.equal(D.findingOnly("Version 2.5.1 of the parser crashes on empty input."), "Version 2.5.1 of the parser crashes on empty input.");
 });
+
+// ================= round 36: CI 45864257264 — session overran its end by 15+ min; proposals still on the board =================
+test("lattice session ends on time even when a cycle never returns", async () => {
+  process.env.SESSION_MINUTE_MS = "60"; process.env.SESSION_GRACE_MS = "0";
+  const lattice = await import("../../src/agents/lattice.js");
+  if (lattice.sessionStatus().active) { lattice.stopSession(); await new Promise(r => setTimeout(r, 2500)); }
+  const hung = { council: () => new Promise(() => {}) };            // a model call that never comes back
+  const t0 = Date.now();
+  assert.ok(lattice.startSession(hung, { minutes: 1, agents: ["a"] }).started);
+  for (let i = 0; i < 100 && lattice.sessionStatus().active; i++) await new Promise(r => setTimeout(r, 20));
+  assert.equal(lattice.sessionStatus().active, false, "session closed at its end");
+  assert.ok(Date.now() - t0 < 1500, `ended in ${Date.now() - t0} ms`);
+  delete process.env.SESSION_MINUTE_MS; delete process.env.SESSION_GRACE_MS;
+});
+
+test("router: the SDK's own retries are off, and a timeout is not retried", async () => {
+  const R = await import(`../../src/llm/router.js?r36=${Date.now()}`);
+  assert.equal(R.transient({ status: 408, message: "Request timed out." }), false);
+  assert.equal(R.transient({ name: "APIConnectionTimeoutError", message: "Request timed out." }), false);
+  assert.equal(R.transient({ status: 503, message: "busy" }), true);
+  const src = (await import("node:fs")).readFileSync(new URL("../../src/llm/router.js", import.meta.url), "utf8");
+  assert.match(src, /maxRetries:\s*0/);
+});
+
+test("eureka board: 'Additionally, we should…', 'To verify X, we should…', 'I believe we should…', 'I agree with…' are not findings", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  for (const s of [
+    "Additionally, we should explore testing with extremely small data inputs, such as single-byte or zero-length data streams.",
+    "To verify the execution of custom instructions and ensure robustness, we should use the `ssh` command to connect to the user's node.",
+    "I believe we should also include tests for concurrent agent creation with the same name.",
+    "I agree with the edge cases proposed by Grok Main and edge-critic.",
+  ]) assert.equal(D.isFinding(s), false, s);
+  assert.equal(D.isFinding("To our surprise, the terminal returned exit code 0 for a command that printed an error."), true);
+});

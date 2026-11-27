@@ -23,16 +23,22 @@ const RETRIES = Math.max(0, Number(process.env.MODEL_TRANSIENT_RETRIES ?? 2) || 
 const RETRY_MS = Math.max(0, Number(process.env.MODEL_RETRY_MS ?? 2000));
 export const transient = e => {
   const st = Number(e?.status);
-  if (st === 404 || (st >= 400 && st < 500 && st !== 408 && st !== 429)) return false;
-  return st >= 500 || st === 408 || st === 429 ||
-    /terminated|signal: killed|ECONNRESET|ECONNREFUSED|socket hang up|EPIPE|timed? ?out|Connection error/i.test(String(e?.message));
+  if (st === 404 || (st >= 400 && st < 500 && st !== 429)) return false;
+  // a timeout is not retried: the same prompt on the same busy CPU would time out again
+  if (st === 408 || e?.name === "APIConnectionTimeoutError" || /timed? ?out/i.test(String(e?.message))) return false;
+  return st >= 500 || st === 429 ||
+    /terminated|signal: killed|ECONNRESET|ECONNREFUSED|socket hang up|EPIPE|Connection error/i.test(String(e?.message));
 };
 
 const clients = {};
 function client(model) {
   clients[model] ??= new OpenAI({
     baseURL: `${process.env.OLLAMA_URL || "http://ollama:11434"}/v1`,
-    apiKey: "ollama"
+    apiKey: "ollama",
+    // the router does its own retries; the SDK's own (2 by default, on 5xx and timeouts) multiplied
+    // ours to 9 tries a model, and a CI session sat past its end for 15+ minutes (run 45864257264)
+    maxRetries: 0,
+    timeout: Math.max(5_000, Number(process.env.LLM_TIMEOUT_MS) || 300_000)
   });
   return clients[model];
 }

@@ -2134,3 +2134,20 @@ test("eureka board: 'Additionally, we should…', 'To verify X, we should…', '
   ]) assert.equal(D.isFinding(s), false, s);
   assert.equal(D.isFinding("To our surprise, the terminal returned exit code 0 for a command that printed an error."), true);
 });
+
+// ================= round 37: CI 45864257264 — template paths, EUREKA stutter =================
+test("tools: template paths like /path/to/system/src are refused with a 'list first' hint", async () => {
+  const R = await import("../../src/agents/runtime.js");
+  for (const v of ["/path/to/system/tests", "path/to/file.js", "ls -la /path/to/system/src", "cat <your-file>", "cd /your-project && npm test"])
+    assert.match(R.placeholderArg({ command: v }) || "", /placeholder.*harness\.list/, v);
+  for (const v of ["/workspace/agents/a/src", "ls -la src/agents", "the path to success", "echo '<b>x</b>'"])
+    assert.equal(R.placeholderArg({ command: v }), null, v);
+  assert.equal(R.placeholderArg({ n: 3 }), null);
+});
+
+test("dialogue: 'EUREKA: EUREKA: EUREKA:' is one EUREKA, and its finding still lands", async () => {
+  const D = await import("../../src/agents/dialogue.js");
+  assert.equal(D.destutter("EUREKA: EUREKA: EUREKA: Using node.exec lists services."), "EUREKA: Using node.exec lists services.");
+  assert.equal(D.findingOnly("EUREKA: EUREKA: EUREKA: Using node.exec to list services on a node shows what is running there. Let's go."),
+    "Using node.exec to list services on a node shows what is running there.");
+});

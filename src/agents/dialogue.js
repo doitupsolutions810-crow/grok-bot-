@@ -38,8 +38,11 @@ export const ENGLISH_STYLE =
 const clean = (s, max = MAX_TEXT) => String(s ?? "").replace(/\u0000/g, "").trim().slice(0, max);
 const name = s => clean(s, 64).toLowerCase() || "unknown";
 
+// "EUREKA: EUREKA: EUREKA: …" (CI 45864257264) is one EUREKA
+export const destutter = s => String(s ?? "").replace(/\bEUREKA:(\s*EUREKA:)+/gi, "EUREKA:");
+
 export function post({ from, to = "*", kind = "note", text, runId = "" } = {}) {
-  const body = clean(text);
+  const body = clean(destutter(text));
   if (!body) throw new Error("text required");
   if (!KINDS.includes(kind)) throw new Error(`kind must be one of ${KINDS.join(", ")}`);
   const info = db.prepare("INSERT INTO dialogue (ts, run_id, from_agent, to_agent, kind, text) VALUES (datetime('now'),?,?,?,?,?)")
@@ -99,7 +102,7 @@ export function similar(a, b) {
 // trailing "(grok-engineer)" credit the model invented. Seen live: whole paragraphs with
 // "Let's start by…" and a second EUREKA line landed on the board as one finding.
 export function findingOnly(text) {
-  const t = String(text ?? "").replace(/^\s*EUREKA:\s*/i, "").split(/\s*\bEUREKA:\s*/i)[0];
+  const t = destutter(text).replace(/^\s*EUREKA:\s*/i, "").split(/\s*\bEUREKA:\s*/i)[0];
   const sentences = t.trim().split(/(?<=[.!?])\s+/);      // "2.5.1" and "e.g." stay inside a sentence
   const kept = [];
   for (const raw of sentences) {

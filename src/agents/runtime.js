@@ -19,10 +19,20 @@ function parseArgs(call) {
   return a && typeof a === "object" && !Array.isArray(a) ? a : { value: a };
 }
 
+// Template paths the model copied from docs ("/path/to/system/src", "<your-file>") never exist;
+// say so before the tool runs, so the next step lists the real tree. Seen in CI 45864257264.
+export const PLACEHOLDER = /(^|[\s"'=:(])\/?path\/to\/|<\s*(your|path|file|dir|repo)[-_ a-z]*>|\/your[-_]?(project|repo|dir|path)\b/i;
+export function placeholderArg(args) {
+  const hit = Object.values(args || {}).find(v => typeof v === "string" && PLACEHOLDER.test(v));
+  return hit === undefined ? null : `"${String(hit).slice(0, 120)}" is a placeholder from an example, not a real path. ` +
+    "List what exists first (harness.list for the code, terminal `ls` or node.exec `ls` on your node), then use a path from that list.";
+}
+
 async function execTool(available, name, args, ctx, runId) {
   const tool = available.find(t => t.name === name);
   let result;
-  try { result = tool ? await tool.run(args, ctx) : { error: `unknown tool: ${name}` }; }
+  const ph = placeholderArg(args);
+  try { result = ph ? { error: ph } : tool ? await tool.run(args, ctx) : { error: `unknown tool: ${name}` }; }
   catch (e) { result = { error: e.message }; }
   emit(runId, "tool.result", { agent: ctx?.agent, tool: name, ok: !result?.error });
   lattice.record("tool_result", { agent: ctx?.agent, runId, text: `${name}: ${result?.error ? "error: " + result.error : JSON.stringify(result ?? null)}`, data: { tool: name, ok: !result?.error } });
